@@ -16,6 +16,7 @@ import {
   Search,
   X,
 } from 'lucide-react'
+import { priorityCode, priorityRank } from '@/lib/volo/priority'
 import type { CrossBoardTask } from '@/lib/volo/client'
 import type { Assignment } from '@/lib/volo/assignments'
 import AssignTaskDialog from '@/components/volo/AssignTaskDialog'
@@ -36,14 +37,31 @@ interface Queue {
 }
 
 const PRIORITY_STYLES: Record<string, string> = {
-  critical: 'bg-red-500/15 text-red-300 border-red-500/30',
-  urgent: 'bg-red-500/15 text-red-300 border-red-500/30',
-  high: 'bg-orange-500/15 text-orange-300 border-orange-500/30',
-  medium: 'bg-blue-500/15 text-blue-300 border-blue-500/30',
-  low: 'bg-gray-500/15 text-gray-400 border-gray-500/30',
+  P0: 'bg-red-500/20 text-red-300 border-red-500/40 font-semibold',
+  P1: 'bg-orange-500/15 text-orange-300 border-orange-500/30',
+  P2: 'bg-blue-500/15 text-blue-300 border-blue-500/30',
+  P3: 'bg-gray-500/10 text-gray-500 border-gray-700',
 }
 
-const PRIORITIES = ['critical', 'urgent', 'high', 'medium', 'low']
+const PRIORITIES = [
+  { value: 'critical', label: 'P0 · Critical' },
+  { value: 'high', label: 'P1 · High' },
+  { value: 'medium', label: 'P2 · Medium' },
+  { value: 'low', label: 'P3 · Low' },
+]
+
+/**
+ * Volo normalises every column to three types, which hides the step a task is
+ * actually at: `Review` and `Blocked` both arrive as `in_progress`, so a
+ * blocked task looks identical to one being worked on. The real column name is
+ * shown on the card for exactly that reason.
+ */
+const STEP_STYLES: Record<string, string> = {
+  Blocked: 'bg-red-500/15 text-red-300',
+  Bloqueado: 'bg-red-500/15 text-red-300',
+  Review: 'bg-purple-500/15 text-purple-300',
+  'En Revisión': 'bg-purple-500/15 text-purple-300',
+}
 
 /** Age is only worth showing once a task has clearly stalled. */
 function ageLabel(days?: number): string | null {
@@ -121,34 +139,47 @@ export default function VoloPage() {
 
   const term = search.trim().toLowerCase()
 
+  // P0 first, always. Within a priority, the stalest task leads: those are the
+  // ones worth delegating.
+  const byPriorityThenAge = (a: CrossBoardTask, b: CrossBoardTask) => {
+    const rank = priorityRank(a.priority) - priorityRank(b.priority)
+    return rank !== 0 ? rank : (b.ageDays ?? 0) - (a.ageDays ?? 0)
+  }
+
   const filteredTasks = (queue?.unassigned || []).filter((t) => {
     if (board && t.boardPrefix !== board) return false
     if (priority && t.priority !== priority) return false
     if (stalled && (t.ageDays ?? 0) < 7) return false
-    // The agent filter is about delegation, so it empties this column rather
-    // than being ignored here — a task nobody has delegated has no agent.
+    // Filtering by agent is asking "what is X working on", and nothing in this
+    // column has been delegated yet — so it legitimately empties.
     if (agent) return false
     if (term && !`${t.taskCode} ${t.title}`.toLowerCase().includes(term)) {
       return false
     }
     return true
-  })
+  }).sort(byPriorityThenAge)
 
   const filterAssignments = (list: Assignment[]) =>
     list.filter((a) => {
       if (board && a.boardPrefix !== board) return false
       if (agent && a.agentName !== agent) return false
-      // Priority lives on the Volo task, which the assignment record does not
-      // copy; filtering by it would silently hide delegated work.
-      if (priority) return false
+      if (priority && a.priority !== priority) return false
       if (term && !`${a.taskCode} ${a.taskTitle}`.toLowerCase().includes(term)) {
         return false
       }
       return true
     })
 
-  const withAgent = filterAssignments(queue?.withAgent || [])
-  const answered = filterAssignments(queue?.answered || [])
+  // Same rule everywhere: P0 at the top of every column.
+  const byAssignmentPriority = (a: Assignment, b: Assignment) =>
+    priorityRank(a.priority) - priorityRank(b.priority)
+
+  const withAgent = filterAssignments(queue?.withAgent || []).sort(
+    byAssignmentPriority
+  )
+  const answered = filterAssignments(queue?.answered || []).sort(
+    byAssignmentPriority
+  )
 
   const anyFilter = board || priority || agent || stalled || term
 
@@ -218,7 +249,7 @@ export default function VoloPage() {
               value={priority}
               onChange={setPriority}
               placeholder="Prioridad"
-              options={PRIORITIES.map((p) => ({ value: p, label: p }))}
+              options={PRIORITIES}
             />
             <Select
               value={agent}
@@ -300,13 +331,26 @@ export default function VoloPage() {
                       <span className="rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-400">
                         {task.boardPrefix}
                       </span>
-                      {task.priority && (
+                      {priorityCode(task.priority) && (
                         <span
-                          className={`rounded border px-1.5 py-0.5 text-[10px] uppercase ${
-                            PRIORITY_STYLES[task.priority] || PRIORITY_STYLES.low
+                          className={`rounded border px-1.5 py-0.5 text-[10px] ${
+                            PRIORITY_STYLES[priorityCode(task.priority)!] ||
+                            PRIORITY_STYLES.P3
                           }`}
                         >
-                          {task.priority}
+                          {priorityCode(task.priority)}
+                        </span>
+                      )}
+                      {/* The step, not the normalised type: Volo reports
+                          Review and Blocked both as in_progress. */}
+                      {task.columnName && (
+                        <span
+                          className={`rounded px-1.5 py-0.5 text-[10px] ${
+                            STEP_STYLES[task.columnName] ||
+                            'bg-gray-800 text-gray-500'
+                          }`}
+                        >
+                          {task.columnName}
                         </span>
                       )}
                       {ageLabel(task.ageDays) && (
@@ -346,8 +390,8 @@ export default function VoloPage() {
 
               <Column
                 icon={<CheckCircle2 className="h-4 w-4 text-green-400" />}
-                title="Respondidas"
-                subtitle="el agente contestó, pendiente de revisar"
+                title="Para revisar"
+                subtitle="el agente contestó — léelo, no implica que esté hecho"
                 count={answered.length}
               >
                 {answered.map((a) => (
@@ -420,6 +464,16 @@ function AssignmentCard({
         <span className="rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-400">
           {assignment.boardPrefix}
         </span>
+        {priorityCode(assignment.priority) && (
+          <span
+            className={`rounded border px-1.5 py-0.5 text-[10px] ${
+              PRIORITY_STYLES[priorityCode(assignment.priority)!] ||
+              PRIORITY_STYLES.P3
+            }`}
+          >
+            {priorityCode(assignment.priority)}
+          </span>
+        )}
         <span className="ml-auto text-[10px] text-gray-600">
           {since(assignment.answeredAt || assignment.assignedAt)}
         </span>

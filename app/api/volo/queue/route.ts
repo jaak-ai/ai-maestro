@@ -64,7 +64,9 @@ export async function GET(request: NextRequest) {
     const kanban = await getCrossBoardKanban({
       mine: params.get('mine') !== 'false',
       includeDone: params.get('includeDone') === 'true',
-      limit: 200,
+      // 500, not 200: at 200 Volo truncated 75 of this workspace's tasks, and
+      // a queue that silently omits work is worse than a slow one.
+      limit: 500,
     })
     tasks = kanban.columns.flatMap((c) => c.tasks)
     boards = kanban.boards

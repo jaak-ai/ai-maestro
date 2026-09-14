@@ -26,6 +26,14 @@ export interface Assignment {
   taskTitle: string
   boardPrefix: string
   boardName: string
+  /**
+   * Priority at assignment time.
+   *
+   * Copied rather than looked up: without it the queue cannot filter delegated
+   * work by priority, and a priority filter that silently empties the agent
+   * columns hides exactly the work the operator is tracking.
+   */
+  priority?: string
   agentId: string
   agentName: string
   /** AMP message delivered to the agent — the correlation key for the reply. */

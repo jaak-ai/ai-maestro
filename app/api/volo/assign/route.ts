@@ -149,6 +149,7 @@ export async function POST(request: NextRequest) {
     taskTitle: title,
     boardPrefix: detail?.board?.prefix || '',
     boardName: detail?.board?.name || '',
+    priority: task.priority,
     agentId: agent.id,
     agentName: agent.label || agent.name,
     messageId: outcome.message.id,

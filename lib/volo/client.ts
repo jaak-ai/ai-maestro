@@ -290,6 +290,10 @@ export interface CrossBoardOptions {
  * this workspace), so grouping by name would scatter the same state across
  * several columns.
  */
+// Priority helpers live in ./priority so client components can import them
+// without dragging this module's server-only dependencies into the browser.
+export { PRIORITY_CODES, priorityRank, priorityCode } from '@/lib/volo/priority'
+
 export async function getCrossBoardKanban(
   options: CrossBoardOptions = {}
 ): Promise<CrossBoardKanban> {
