@@ -112,3 +112,21 @@ describe('agentBaseUrl', () => {
     expect(agentBaseUrl(agent)).not.toContain('23000//')
   })
 })
+
+describe('security advertised on the card', () => {
+  it('advertises no scheme when the server is open', () => {
+    const card = buildAgentCard(makeAgent())
+    expect(card.securitySchemes).toEqual({})
+    expect(card.securityRequirements).toEqual([])
+  })
+
+  // A client that is not told a token is needed discovers it by failing the
+  // first call. Advertising the scheme turns that into a normal handshake.
+  it('advertises bearer when the server requires a token', () => {
+    const card = buildAgentCard(makeAgent(), { requiresAuth: true })
+    expect(card.securitySchemes.bearer?.scheme?.$case).toBe(
+      'httpAuthSecurityScheme'
+    )
+    expect(card.securityRequirements).toHaveLength(1)
+  })
+})

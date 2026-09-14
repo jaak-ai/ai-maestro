@@ -42,12 +42,22 @@ SDK:  `@a2a-js/sdk` v1.1.0 (oficial, servidor + cliente)
       sobrevive a un reinicio; AI Maestro corre bajo PM2 con reinicios).
 - [ ] Montaje del transporte: rutas Next bajo `app/api/a2a/` o intercepción
       en `server.mjs`. Debe funcionar en modo full y headless.
-- [ ] Autenticación: qué exige el servidor a un cliente A2A externo.
-      Sin esto NO se despliega fuera de la VPN.
+- [x] Autenticación — `lib/a2a/auth.ts` (20 tests). Bearer token, comparación
+      en tiempo constante, y APAGADO por defecto: sin tokens configurados el
+      servidor no sirve. `enabled:true` sin tokens se trata como apagado, no
+      como "deja pasar a todos". La card anuncia el esquema cuando hay auth.
 - [ ] Firma de Agent Cards con JWS reutilizando las claves Ed25519 que AMP ya
       genera por agente, en vez de introducir un modelo de identidad nuevo.
 - [ ] Tests unitarios (vitest, como el resto del repo).
 - [ ] Documentación en `docs/` y entrada en CLAUDE.md.
+
+## Prioridad acordada
+
+1. A2A (esta rama)
+2. Plugin de Volo — BLOQUEADO: falta decidir autenticación (token `jk_` con
+   scopes tasks:read/tasks:write/boards:read, o implementar OAuth en Node
+   porque el servidor no ofrece device flow).
+3. Issue #241 (aplicar la política de mensajería de equipos) — DESPUÉS de 1 y 2.
 
 ## Riesgos conocidos
 

@@ -111,6 +111,12 @@ function buildInterfaces(agent: Agent): AgentInterface[] {
 }
 
 export interface BuildAgentCardOptions {
+  /**
+   * Whether the server requires a bearer token. When true the card advertises
+   * the scheme so a client knows to present credentials instead of discovering
+   * it through a 401 on the first call.
+   */
+  requiresAuth?: boolean
   /** Version string for the card. Defaults to the AI Maestro app version. */
   version?: string
   /** Organization to advertise as the provider. */
@@ -147,8 +153,23 @@ export function buildAgentCard(
       pushNotifications: SUPPORTS_PUSH_NOTIFICATIONS,
       extensions: [],
     },
-    securitySchemes: {},
-    securityRequirements: [],
+    ...(options.requiresAuth
+      ? {
+          securitySchemes: {
+            bearer: {
+              scheme: {
+                $case: 'httpAuthSecurityScheme' as const,
+                value: {
+                  description: 'AI Maestro A2A bearer token',
+                  scheme: 'bearer',
+                  bearerFormat: 'opaque',
+                },
+              },
+            },
+          },
+          securityRequirements: [{ schemes: { bearer: { list: [] } } }],
+        }
+      : { securitySchemes: {}, securityRequirements: [] }),
     defaultInputModes: ['text/plain'],
     defaultOutputModes: ['text/plain'],
     skills: buildSkills(agent),
