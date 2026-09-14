@@ -1,0 +1,5 @@
+{
+  "env": {
+    "CLAUDE_AGENT_NAME": "_aim-assistant"
+  }
+}

@@ -23,16 +23,18 @@ SDK:  `@a2a-js/sdk` v1.1.0 (oficial, servidor + cliente)
 
 ## Subtareas
 
-- [ ] Identidad del remitente: decidir cómo se representa un llamante A2A
-      externo al enviar por AMP (`sendFromUI` exige un `from` que resuelva a
-      un agente). Probable: identidad dedicada tipo `a2a-gateway`.
-- [ ] Generar la Agent Card por agente desde el registro
-      (`lib/agent-registry.ts`): nombre, descripción, skills, URL, transportes.
+- [x] Identidad del remitente. RESUELTO sin agente sintético: `sendFromUI`
+      NO exige que el `from` resuelva a un agente registrado — lo marca como
+      no verificado (`fromVerified: false`, caso ya previsto para "external
+      agents") y entrega igual. El llamante A2A se propaga tal cual, así que
+      no se pierde quién llamó.
+- [x] Agent Card por agente — `lib/a2a/agent-card.ts` (12 tests).
 - [ ] Endpoint de descubrimiento en la ruta well-known que exige la spec.
-- [ ] `AgentExecutor` que traduce `message/send` → `sendFromUI()` y devuelve
-      la tarea en estado `submitted`/`working`.
-- [ ] Correlación de la respuesta: mapear `taskId` ↔ id del mensaje AMP y
-      resolver la tarea cuando llegue un mensaje con ese `inReplyTo`.
+- [~] Puente AMP — `lib/a2a/amp-bridge.ts`: `dispatchToAgent()` y
+      `findReply()` listos. Falta envolverlos en un `AgentExecutor` del SDK.
+- [~] Correlación: `findReply()` busca en el buzón de enviados del agente
+      por `inReplyTo`, acotado por timestamp. Falta persistir el mapa
+      `taskId` ↔ `ampMessageId` y decidir polling vs evento.
 - [ ] Almacén de tareas persistente (el `InMemoryTaskStore` del SDK no
       sobrevive a un reinicio; AI Maestro corre bajo PM2 con reinicios).
 - [ ] Montaje del transporte: rutas Next bajo `app/api/a2a/` o intercepción
