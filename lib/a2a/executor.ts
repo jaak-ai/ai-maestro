@@ -30,6 +30,7 @@ import {
   type TaskStatus,
 } from '@a2a-js/sdk'
 import { dispatchToAgent, findReply, replyText } from '@/lib/a2a/amp-bridge'
+import { FileTaskStore } from '@/lib/a2a/task-store'
 
 /** How often to check whether the agent has answered. */
 const POLL_INTERVAL_MS = 3000
@@ -101,9 +102,23 @@ function status(
 export interface AmpExecutorOptions {
   /** Registry id, name or alias of the agent this executor speaks for. */
   agentIdentifier: string
+  /**
+   * Where the task is updated once the agent answers.
+   *
+   * The wait happens after the request has been answered, so the completion
+   * cannot be published on the execution's event bus — it is written straight
+   * to the store, which is what `GetTask` reads.
+   */
+  taskStore?: FileTaskStore
   /** Overrides for testing. */
   pollIntervalMs?: number
   replyTimeoutMs?: number
+  /**
+   * Await the reply inline instead of detaching it. Tests use this to assert
+   * the completion path without racing a background timer; production never
+   * sets it, because a blocking wait holds the HTTP request open.
+   */
+  awaitInline?: boolean
 }
 
 export class AmpBridgeExecutor implements AgentExecutor {
@@ -111,6 +126,15 @@ export class AmpBridgeExecutor implements AgentExecutor {
 
   constructor(private readonly options: AmpExecutorOptions) {}
 
+  /**
+   * Fail the task with a reason the caller can read.
+   *
+   * A status-update is only meaningful once the task it refers to exists: the
+   * SDK answers "execution finished without a result, and no task context
+   * found" — an internal error, not a failed task — if the first event it sees
+   * is an update. `execute` therefore publishes the task before any validation,
+   * so every path into here already has a task to refer to.
+   */
   private fail(
     eventBus: ExecutionEventBus,
     taskId: string,
@@ -138,18 +162,9 @@ export class AmpBridgeExecutor implements AgentExecutor {
     const { taskId, contextId } = requestContext
     const text = textFromMessage(requestContext.userMessage)
 
-    if (!text) {
-      this.fail(
-        eventBus,
-        taskId,
-        contextId,
-        'The request contained no text part to deliver.'
-      )
-      return
-    }
-
-    // Announce the task before doing any I/O, so a client that is watching
-    // sees it exist even if delivery is slow.
+    // Announce the task before anything else — before validation, before any
+    // I/O. Every later event refers to it, and a client that is watching sees
+    // it exist even if delivery is slow or the request turns out to be invalid.
     const task: Task = {
       id: taskId,
       contextId,
@@ -159,6 +174,16 @@ export class AmpBridgeExecutor implements AgentExecutor {
       metadata: undefined,
     }
     eventBus.publish(AgentEvent.task(task))
+
+    if (!text) {
+      this.fail(
+        eventBus,
+        taskId,
+        contextId,
+        'The request contained no text part to deliver.'
+      )
+      return
+    }
 
     let dispatched
     try {
@@ -199,6 +224,18 @@ export class AmpBridgeExecutor implements AgentExecutor {
     )
 
     const dispatchedAt = new Date().toISOString()
+
+    // Hand the request back now. A2A models this shape as a long-running task:
+    // the caller gets `working` and polls GetTask. Awaiting the agent here
+    // would hold the HTTP request open for as long as the agent takes to
+    // answer — up to the whole reply timeout — which is precisely the blocking
+    // behaviour that choosing store-and-forward delivery was meant to avoid.
+    if (!this.options.awaitInline) {
+      void this.completeInBackground(taskId, contextId, dispatched.ampMessageId, dispatchedAt)
+      eventBus.finished()
+      return
+    }
+
     const reply = await this.awaitReply(
       taskId,
       dispatched.ampMessageId,
@@ -255,6 +292,69 @@ export class AmpBridgeExecutor implements AgentExecutor {
       })
     )
     eventBus.finished()
+  }
+
+  /**
+   * Wait for the agent off the request path and record the outcome.
+   *
+   * Writes straight to the task store: by the time the reply lands, the
+   * execution's event bus is finished and nothing is listening to it. A client
+   * sees the result through GetTask.
+   */
+  private async completeInBackground(
+    taskId: string,
+    contextId: string,
+    ampMessageId: string,
+    dispatchedAt: string
+  ): Promise<void> {
+    const store = this.options.taskStore
+    if (!store) return
+
+    let reply
+    try {
+      reply = await this.awaitReply(taskId, ampMessageId, dispatchedAt)
+    } catch {
+      reply = null
+    }
+
+    const task = await store.load(taskId)
+    if (!task) return
+
+    if (this.cancelled.has(taskId)) {
+      this.cancelled.delete(taskId)
+      task.status = status(TaskState.TASK_STATE_CANCELED)
+    } else if (reply) {
+      task.artifacts = [
+        ...(task.artifacts || []),
+        {
+          artifactId: `${taskId}-reply`,
+          name: 'agent-reply',
+          description: 'The agent\u2019s AMP reply to this task.',
+          parts: [textPart(replyText(reply))],
+          metadata: undefined,
+          extensions: [],
+        },
+      ]
+      task.status = status(TaskState.TASK_STATE_COMPLETED)
+    } else {
+      task.status = status(
+        TaskState.TASK_STATE_FAILED,
+        agentMessage(
+          taskId,
+          contextId,
+          `${taskId}-timeout`,
+          'The agent did not reply within the timeout. The message is still in its inbox.'
+        )
+      )
+    }
+
+    try {
+      await store.save(task)
+    } catch {
+      // A task that cannot be persisted is not worth crashing a background
+      // timer over; the client will keep seeing `working` until the retention
+      // sweep removes it.
+    }
   }
 
   /** Poll the agent's sent box until the reply appears, or time out. */

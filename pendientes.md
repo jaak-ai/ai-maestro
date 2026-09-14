@@ -40,8 +40,10 @@ SDK:  `@a2a-js/sdk` v1.1.0 (oficial, servidor + cliente)
       upstream acepte el PR. Sustituir `awaitReply` si el coste importa.
 - [x] Almacén de tareas persistente — `lib/a2a/task-store.ts` (13 tests). El `InMemoryTaskStore` del SDK no
       sobrevive a un reinicio; AI Maestro corre bajo PM2 con reinicios).
-- [ ] Montaje del transporte: rutas Next bajo `app/api/a2a/` o intercepción
-      en `server.mjs`. Debe funcionar en modo full y headless.
+- [x] Montaje del transporte — `app/api/a2a/agents/[id]/[[...path]]/route.ts`
+      + `lib/a2a/server.ts`. Catch-all porque Next ignora carpetas que
+      empiezan por punto, así que `.well-known` no puede ser un directorio.
+      Smoke test reejecutable en `scripts/test-a2a.sh` (16/16 en vivo).
 - [x] Autenticación — `lib/a2a/auth.ts` (20 tests). Bearer token, comparación
       en tiempo constante, y APAGADO por defecto: sin tokens configurados el
       servidor no sirve. `enabled:true` sin tokens se trata como apagado, no
@@ -58,6 +60,25 @@ SDK:  `@a2a-js/sdk` v1.1.0 (oficial, servidor + cliente)
    scopes tasks:read/tasks:write/boards:read, o implementar OAuth en Node
    porque el servidor no ofrece device flow).
 3. Issue #241 (aplicar la política de mensajería de equipos) — DESPUÉS de 1 y 2.
+
+## Verificado en vivo (16/16)
+
+Ciclo completo contra el servidor: cerrado→404, auth→401, card, SendMessage
+devuelve WORKING en 0s, GetTask, ListTasks, persistencia en disco, y entrega
+real al buzón AMP del agente.
+
+Tres errores que SOLO aparecieron en la prueba viva, no en los unitarios:
+
+1. Un status-update sin tarea previa hacía que el SDK respondiera
+   "execution finished without a result, and no task context found" — error
+   interno en vez de tarea fallida. Ahora la tarea se publica antes de nada.
+2. `SendMessage` BLOQUEABA la petición HTTP hasta 15 minutos, porque el
+   ejecutor esperaba la respuesta del agente dentro de `execute()`. Ahora
+   devuelve `working` y termina de esperar en segundo plano, escribiendo el
+   resultado en el almacén; el cliente sondea `GetTask`.
+3. Los nombres de método de v1.0 son PascalCase (`SendMessage`, `GetTask`,
+   `CancelTask`, `ListTasks`), no `message/send` ni `tasks/get` de v0.3. Y
+   `GetTask` toma `id`, no `name: "tasks/<id>"`.
 
 ## Riesgos conocidos
 

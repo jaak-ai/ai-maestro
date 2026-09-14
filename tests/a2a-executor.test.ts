@@ -103,6 +103,7 @@ describe('AmpBridgeExecutor', () => {
     const { bus, events } = harness
     const exec = new AmpBridgeExecutor({
       agentIdentifier: 'backend-api',
+      awaitInline: true,
       pollIntervalMs: 1,
       replyTimeoutMs: 500,
     })
@@ -129,6 +130,26 @@ describe('AmpBridgeExecutor', () => {
     expect(states(events)).toEqual([TaskState.TASK_STATE_FAILED])
   })
 
+  // Caught live, not in unit tests: a status-update with no preceding task made
+  // the SDK answer "execution finished without a result, and no task context
+  // found" — an internal error instead of a readable failed task.
+  it('publishes the task before any status update, even when rejecting', async () => {
+    const { bus, events } = makeBus()
+    const exec = new AmpBridgeExecutor({ agentIdentifier: 'backend-api' })
+    await exec.execute(context(''), bus)
+
+    expect(events[0].kind).toBe('task')
+  })
+
+  it('publishes the task first on a delivery failure too', async () => {
+    dispatchToAgent.mockRejectedValue(new Error('boom'))
+    const { bus, events } = makeBus()
+    const exec = new AmpBridgeExecutor({ agentIdentifier: 'backend-api' })
+    await exec.execute(context('haz algo'), bus)
+
+    expect(events[0].kind).toBe('task')
+  })
+
   // A queued message for an offline agent is the designed behaviour, not an
   // error — but the client must be told, or it cannot tell "slow" from "stuck".
   it('says so when the agent was offline and the message was queued', async () => {
@@ -142,6 +163,7 @@ describe('AmpBridgeExecutor', () => {
     const { bus, events } = makeBus()
     const exec = new AmpBridgeExecutor({
       agentIdentifier: 'backend-api',
+      awaitInline: true,
       pollIntervalMs: 1,
       replyTimeoutMs: 500,
     })
@@ -168,6 +190,7 @@ describe('AmpBridgeExecutor', () => {
     const { bus, events } = makeBus()
     const exec = new AmpBridgeExecutor({
       agentIdentifier: 'backend-api',
+      awaitInline: true,
       pollIntervalMs: 1,
       replyTimeoutMs: 30,
     })
@@ -204,6 +227,7 @@ describe('AmpBridgeExecutor', () => {
     const { bus, events } = makeBus()
     const exec = new AmpBridgeExecutor({
       agentIdentifier: 'backend-api',
+      awaitInline: true,
       pollIntervalMs: 1,
       replyTimeoutMs: 5000,
     })
@@ -213,5 +237,41 @@ describe('AmpBridgeExecutor', () => {
     await running
 
     expect(states(events)).toContain(TaskState.TASK_STATE_CANCELED)
+  })
+})
+
+// Caught live: SendMessage held the HTTP request open for the whole reply
+// timeout because execute() awaited the agent. A2A models this as a
+// long-running task — return `working`, let the client poll GetTask.
+describe('AmpBridgeExecutor does not block the request', () => {
+  beforeEach(() => {
+    dispatchToAgent.mockReset()
+    findReply.mockReset()
+  })
+
+  it('returns as soon as the message is delivered', async () => {
+    dispatchToAgent.mockResolvedValue({
+      ampMessageId: 'amp-1',
+      notified: true,
+      deferred: false,
+    })
+    // An agent that never answers: the old code would sit here for the whole
+    // timeout.
+    findReply.mockImplementation(() => new Promise(() => {}))
+
+    const harness = makeBus()
+    const exec = new AmpBridgeExecutor({
+      agentIdentifier: 'backend-api',
+      pollIntervalMs: 1,
+      replyTimeoutMs: 60_000,
+    })
+
+    const started = Date.now()
+    await exec.execute(context('haz algo'), harness.bus)
+    const elapsed = Date.now() - started
+
+    expect(elapsed).toBeLessThan(1000)
+    expect(harness.finished).toBe(true)
+    expect(states(harness.events)).toEqual([TaskState.TASK_STATE_WORKING])
   })
 })

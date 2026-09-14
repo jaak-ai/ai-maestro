@@ -44,7 +44,7 @@ interface StoredTokens {
  * that inject secrets as environment variables. Absent both, the server is off.
  */
 export function loadAuthConfig(
-  env: NodeJS.ProcessEnv = process.env,
+  env: Record<string, string | undefined> = process.env,
   configPath: string = authConfigPath()
 ): A2AAuthConfig {
   const fromEnv = (env.AIMAESTRO_A2A_TOKENS || '')
