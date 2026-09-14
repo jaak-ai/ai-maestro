@@ -29,6 +29,7 @@ export default function AssignTaskDialog({ task, onClose, onAssigned }: Props) {
   const [agents, setAgents] = useState<Agent[]>([])
   const [agentId, setAgentId] = useState('')
   const [note, setNote] = useState('')
+  const [advance, setAdvance] = useState(true)
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<Result | null>(null)
@@ -58,6 +59,7 @@ export default function AssignTaskDialog({ task, onClose, onAssigned }: Props) {
           taskCode: task.taskCode,
           agentId,
           note: note.trim() || undefined,
+          advanceInVolo: advance,
         }),
       })
       const data = await res.json()
@@ -114,8 +116,17 @@ export default function AssignTaskDialog({ task, onClose, onAssigned }: Props) {
                 {result.deferred
                   ? ' El agente está apagado; la recibirá al despertar.'
                   : ' El agente ha sido avisado.'}
+                {result.moved && ' Movida a «en curso» en Volo.'}
               </span>
             </div>
+            {/* Delivery succeeded but Volo was not updated: the operator has
+                to know, or Volo quietly disagrees with the queue. */}
+            {result.moveError && (
+              <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>Entregada, pero no se movió en Volo: {result.moveError}</span>
+              </div>
+            )}
             <button
               onClick={onClose}
               className="w-full rounded-lg bg-gray-800 px-4 py-2 text-sm hover:bg-gray-700"
@@ -155,6 +166,22 @@ export default function AssignTaskDialog({ task, onClose, onAssigned }: Props) {
               placeholder="Por dónde empezar, restricciones, contexto..."
               className="mb-4 w-full resize-none rounded-lg border border-gray-800 bg-gray-950 px-3 py-2 text-sm text-gray-200 placeholder-gray-600 focus:border-teal-600 focus:outline-none"
             />
+
+            <label className="mb-4 flex cursor-pointer items-start gap-2 text-xs text-gray-400">
+              <input
+                type="checkbox"
+                checked={advance}
+                onChange={(e) => setAdvance(e.target.checked)}
+                className="mt-0.5 accent-teal-600"
+              />
+              <span>
+                Mover a &laquo;en curso&raquo; en Volo
+                <span className="block text-gray-600">
+                  Solo si la entrega tiene éxito, para que Volo no diga que hay
+                  trabajo en marcha que nadie recibió.
+                </span>
+              </span>
+            </label>
 
             {error && (
               <div className="mb-4 flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">

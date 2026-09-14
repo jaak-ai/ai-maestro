@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getTask, moveTask, VoloNotConnectedError } from '@/lib/volo/client'
 import { sendFromUI } from '@/lib/message-send'
 import { getAgent } from '@/lib/agent-registry'
+import { recordAssignment } from '@/lib/volo/assignments'
+import { getCrossBoardKanban } from '@/lib/volo/client'
 
 /**
  * POST /api/volo/assign
@@ -19,6 +21,11 @@ interface AssignBody {
   note?: string
   /** Column to move the task to in Volo, after delivery succeeds. */
   moveToColumnId?: string
+  /**
+   * Advance the task to the board's in-progress column without naming it.
+   * Column ids differ per board, so the caller usually cannot know one.
+   */
+  advanceInVolo?: boolean
 }
 
 export async function POST(request: NextRequest) {
@@ -102,14 +109,54 @@ export async function POST(request: NextRequest) {
   // when no agent ever received it.
   let moved = false
   let moveError: string | undefined
-  if (body.moveToColumnId && detail?.board?.id) {
+  const boardId = detail?.board?.id
+
+  let columnId = body.moveToColumnId
+  if (!columnId && body.advanceInVolo && boardId) {
+    // Resolve the board's in-progress column. Boards name it differently
+    // ("In Progress", "En curso", "En Ejecución"), so match on the normalised
+    // type Volo already computes rather than on the label.
     try {
-      await moveTask(detail.board.id, task.id, body.moveToColumnId)
+      const kanban = await getCrossBoardKanban({
+        mine: false,
+        limit: 200,
+        boardIds: [boardId],
+      })
+      const sample = kanban.columns
+        .flatMap((c) => c.tasks)
+        .find((t) => t.boardId === boardId && t.columnType === 'in_progress')
+      columnId = sample?.columnId
+    } catch {
+      /* fall through to the no-column case below */
+    }
+  }
+
+  if (columnId && boardId) {
+    try {
+      await moveTask(boardId, task.id, columnId)
       moved = true
     } catch (err) {
       moveError = (err as Error).message
     }
+  } else if (body.advanceInVolo) {
+    moveError = 'No se encontró una columna "en curso" en el board'
   }
+
+  // Recorded after delivery, so the queue never shows a task as being with an
+  // agent that never received it.
+  recordAssignment({
+    taskCode: body.taskCode,
+    taskTitle: title,
+    boardPrefix: detail?.board?.prefix || '',
+    boardName: detail?.board?.name || '',
+    agentId: agent.id,
+    agentName: agent.label || agent.name,
+    messageId: outcome.message.id,
+    assignedAt: new Date().toISOString(),
+    deferred: outcome.deferred === true,
+    state: 'delivered',
+    movedInVolo: moved,
+  })
 
   return NextResponse.json({
     delivered: true,
