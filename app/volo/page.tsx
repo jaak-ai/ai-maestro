@@ -9,8 +9,9 @@ import {
   RefreshCw,
   AlertTriangle,
   Send,
+  Clock,
 } from 'lucide-react'
-import type { VoloBoard, VoloTask } from '@/lib/volo/client'
+import type { CrossBoardKanban, CrossBoardTask } from '@/lib/volo/client'
 import AssignTaskDialog from '@/components/volo/AssignTaskDialog'
 
 interface Status {
@@ -20,49 +21,34 @@ interface Status {
   redirectUri?: string
 }
 
-interface Column {
-  id: string
-  name: string
-  order?: number
-  tasks: VoloTask[]
-}
-
-/** Group tasks under their column — Volo's columns carry no task array. */
-function groupByColumn(board: VoloBoard): Column[] {
-  const columns = [...(board.columns || [])].sort(
-    (a, b) => (a.order ?? 0) - (b.order ?? 0)
-  )
-  const byColumn = new Map<string, VoloTask[]>()
-  for (const task of board.tasks || []) {
-    if (!task.columnId) continue
-    const list = byColumn.get(task.columnId)
-    if (list) list.push(task)
-    else byColumn.set(task.columnId, [task])
-  }
-  return columns.map((c) => ({
-    ...c,
-    tasks: (byColumn.get(c.id) || []).sort(
-      (a, b) => (a.taskNumber ?? 0) - (b.taskNumber ?? 0)
-    ),
-  }))
-}
-
 const PRIORITY_STYLES: Record<string, string> = {
+  critical: 'bg-red-500/15 text-red-300 border-red-500/30',
   urgent: 'bg-red-500/15 text-red-300 border-red-500/30',
   high: 'bg-orange-500/15 text-orange-300 border-orange-500/30',
   medium: 'bg-blue-500/15 text-blue-300 border-blue-500/30',
   low: 'bg-gray-500/15 text-gray-400 border-gray-500/30',
 }
 
+/**
+ * Tasks sitting untouched for a long time are the ones worth handing to an
+ * agent, so age is surfaced rather than buried in a detail view.
+ */
+function ageLabel(days?: number): string | null {
+  if (days == null || days < 7) return null
+  if (days < 30) return `${days}d`
+  return `${Math.floor(days / 30)}m`
+}
+
 export default function VoloPage() {
   const [status, setStatus] = useState<Status | null>(null)
-  const [boards, setBoards] = useState<VoloBoard[]>([])
-  const [selected, setSelected] = useState<string | null>(null)
-  const [board, setBoard] = useState<VoloBoard | null>(null)
+  const [kanban, setKanban] = useState<CrossBoardKanban | null>(null)
+  const [mine, setMine] = useState(true)
+  const [includeDone, setIncludeDone] = useState(false)
+  const [boardFilter, setBoardFilter] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [loadingBoard, setLoadingBoard] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [assigning, setAssigning] = useState<VoloTask | null>(null)
+  const [assigning, setAssigning] = useState<CrossBoardTask | null>(null)
 
   const loadStatus = useCallback(async () => {
     try {
@@ -73,80 +59,98 @@ export default function VoloPage() {
     }
   }, [])
 
-  const loadBoards = useCallback(async () => {
+  const loadWork = useCallback(async () => {
+    setRefreshing(true)
     setError(null)
     try {
-      const res = await fetch('/api/volo/boards')
+      const params = new URLSearchParams({
+        mine: String(mine),
+        includeDone: String(includeDone),
+      })
+      const res = await fetch(`/api/volo/my-work?${params}`)
       if (res.status === 409) {
         setStatus({ connected: false })
         return
       }
       const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'No se pudieron leer los boards')
-      setBoards(data.boards || [])
+      if (!res.ok) throw new Error(data.error || 'No se pudo leer Volo')
+      setKanban(data)
     } catch (err) {
       setError((err as Error).message)
+    } finally {
+      setRefreshing(false)
     }
-  }, [])
+  }, [mine, includeDone])
 
   useEffect(() => {
-    ;(async () => {
-      await loadStatus()
-      setLoading(false)
-    })()
+    void loadStatus().then(() => setLoading(false))
   }, [loadStatus])
 
   useEffect(() => {
-    if (status?.connected) void loadBoards()
-  }, [status?.connected, loadBoards])
-
-  useEffect(() => {
-    if (!selected) return
-    setLoadingBoard(true)
-    setError(null)
-    fetch(`/api/volo/boards/${encodeURIComponent(selected)}`)
-      .then(async (res) => {
-        const data = await res.json()
-        if (!res.ok) throw new Error(data.error || 'No se pudo leer el board')
-        setBoard(data.board)
-      })
-      .catch((err) => setError((err as Error).message))
-      .finally(() => setLoadingBoard(false))
-  }, [selected])
+    if (status?.connected) void loadWork()
+  }, [status?.connected, loadWork])
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-950 text-gray-300 flex items-center justify-center">
-        <RefreshCw className="w-5 h-5 animate-spin" />
+      <div className="flex min-h-screen items-center justify-center bg-gray-950 text-gray-300">
+        <RefreshCw className="h-5 w-5 animate-spin" />
       </div>
     )
   }
 
+  const columns = (kanban?.columns || []).map((column) => ({
+    ...column,
+    tasks: boardFilter
+      ? column.tasks.filter((t) => t.boardPrefix === boardFilter)
+      : column.tasks,
+  }))
+
   return (
     <div className="min-h-screen bg-gray-950 text-gray-200">
-      <header className="border-b border-gray-800 px-6 py-4 flex items-center gap-4">
+      <header className="flex flex-wrap items-center gap-4 border-b border-gray-800 px-6 py-4">
         <Link
           href="/"
-          className="text-gray-400 hover:text-gray-200 flex items-center gap-1.5 text-sm"
+          className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-200"
         >
-          <ArrowLeft className="w-4 h-4" />
+          <ArrowLeft className="h-4 w-4" />
           Agentes
         </Link>
-        <h1 className="text-lg font-medium flex items-center gap-2">
-          <ListTodo className="w-5 h-5 text-teal-400" />
-          Volo
+        <h1 className="flex items-center gap-2 text-lg font-medium">
+          <ListTodo className="h-5 w-5 text-teal-400" />
+          Mi trabajo
         </h1>
+
         {status?.connected && (
-          <button
-            onClick={() => {
-              void loadBoards()
-              if (selected) setSelected(selected)
-            }}
-            className="ml-auto text-sm text-gray-400 hover:text-gray-200 flex items-center gap-1.5"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            Actualizar
-          </button>
+          <div className="ml-auto flex items-center gap-3 text-sm">
+            <label className="flex cursor-pointer items-center gap-1.5 text-gray-400">
+              <input
+                type="checkbox"
+                checked={mine}
+                onChange={(e) => setMine(e.target.checked)}
+                className="accent-teal-600"
+              />
+              Solo mías
+            </label>
+            <label className="flex cursor-pointer items-center gap-1.5 text-gray-400">
+              <input
+                type="checkbox"
+                checked={includeDone}
+                onChange={(e) => setIncludeDone(e.target.checked)}
+                className="accent-teal-600"
+              />
+              Con terminadas
+            </label>
+            <button
+              onClick={() => void loadWork()}
+              disabled={refreshing}
+              className="flex items-center gap-1.5 text-gray-400 hover:text-gray-200 disabled:opacity-50"
+            >
+              <RefreshCw
+                className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`}
+              />
+              Actualizar
+            </button>
+          </div>
         )}
       </header>
 
@@ -162,92 +166,124 @@ export default function VoloPage() {
               </div>
             )}
 
-            <div className="mb-6 flex flex-wrap gap-2">
-              {boards.map((b) => (
+            {kanban && (
+              <div className="mb-5 flex flex-wrap items-center gap-2 text-xs">
                 <button
-                  key={b.id}
-                  onClick={() => setSelected(b.prefix)}
-                  className={`rounded-lg border px-3 py-1.5 text-sm transition-colors ${
-                    selected === b.prefix
+                  onClick={() => setBoardFilter(null)}
+                  className={`rounded-full border px-2.5 py-1 transition-colors ${
+                    !boardFilter
                       ? 'border-teal-500 bg-teal-500/15 text-teal-200'
-                      : 'border-gray-800 bg-gray-900 text-gray-400 hover:border-gray-700 hover:text-gray-200'
+                      : 'border-gray-800 text-gray-500 hover:text-gray-300'
                   }`}
                 >
-                  <span className="font-mono text-xs text-gray-500">
-                    {b.prefix}
-                  </span>{' '}
-                  {b.name}
+                  Todos ({kanban.total})
                 </button>
-              ))}
-            </div>
-
-            {loadingBoard && (
-              <div className="flex items-center gap-2 text-sm text-gray-500">
-                <RefreshCw className="h-4 w-4 animate-spin" />
-                Cargando board...
+                {kanban.boards.map((b) => (
+                  <button
+                    key={b.id}
+                    onClick={() =>
+                      setBoardFilter(boardFilter === b.prefix ? null : b.prefix)
+                    }
+                    className={`rounded-full border px-2.5 py-1 transition-colors ${
+                      boardFilter === b.prefix
+                        ? 'border-teal-500 bg-teal-500/15 text-teal-200'
+                        : 'border-gray-800 text-gray-500 hover:text-gray-300'
+                    }`}
+                    title={b.name}
+                  >
+                    {b.prefix}
+                  </button>
+                ))}
+                {/* Volo caps the result; saying so beats a board that silently
+                    omits work the operator knows exists. */}
+                {!!kanban.truncated && (
+                  <span className="ml-2 text-gray-600">
+                    {kanban.truncated} más sin mostrar
+                  </span>
+                )}
               </div>
             )}
 
-            {!loadingBoard && !selected && (
-              <p className="text-sm text-gray-500">
-                Elige un board para ver sus tareas.
-              </p>
+            {refreshing && !kanban && (
+              <div className="flex items-center gap-2 text-sm text-gray-500">
+                <RefreshCw className="h-4 w-4 animate-spin" />
+                Cargando...
+              </div>
             )}
 
-            {!loadingBoard && board && (
-              <div className="flex gap-4 overflow-x-auto pb-4">
-                {groupByColumn(board).map((column) => (
-                  <section
-                    key={column.id}
-                    className="w-72 shrink-0 rounded-lg border border-gray-800 bg-gray-900/50"
-                  >
-                    <h2 className="flex items-center justify-between border-b border-gray-800 px-3 py-2 text-sm font-medium">
-                      {column.name}
-                      <span className="text-xs text-gray-600">
-                        {column.tasks.length}
-                      </span>
-                    </h2>
-                    <div className="space-y-2 p-2">
-                      {column.tasks.length === 0 && (
-                        <p className="px-1 py-2 text-xs text-gray-600">Vacío</p>
-                      )}
-                      {column.tasks.map((task) => (
-                        <article
-                          key={task.id}
-                          className="group rounded border border-gray-800 bg-gray-900 p-2.5 text-sm hover:border-gray-700"
-                        >
-                          <div className="mb-1 flex items-center gap-2">
-                            <span className="font-mono text-xs text-teal-500">
-                              {task.taskCode}
+            <div className="flex gap-4 overflow-x-auto pb-4">
+              {columns.map((column) => (
+                <section
+                  key={column.type}
+                  className="w-80 shrink-0 rounded-lg border border-gray-800 bg-gray-900/50"
+                >
+                  <h2 className="flex items-center justify-between border-b border-gray-800 px-3 py-2 text-sm font-medium">
+                    {column.label}
+                    <span className="text-xs text-gray-600">
+                      {column.tasks.length}
+                    </span>
+                  </h2>
+                  <div className="max-h-[calc(100vh-16rem)] space-y-2 overflow-y-auto p-2">
+                    {column.tasks.length === 0 && (
+                      <p className="px-1 py-2 text-xs text-gray-600">Vacío</p>
+                    )}
+                    {column.tasks.map((task) => (
+                      <article
+                        key={task.taskId}
+                        className="group rounded border border-gray-800 bg-gray-900 p-2.5 text-sm hover:border-gray-700"
+                      >
+                        <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                          <span className="font-mono text-xs text-teal-500">
+                            {task.taskCode}
+                          </span>
+                          {/* Which board a task comes from is essential here:
+                              the whole view mixes boards together. */}
+                          <span className="rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-400">
+                            {task.boardPrefix}
+                          </span>
+                          {task.priority && (
+                            <span
+                              className={`rounded border px-1.5 py-0.5 text-[10px] uppercase ${
+                                PRIORITY_STYLES[task.priority] ||
+                                PRIORITY_STYLES.low
+                              }`}
+                            >
+                              {task.priority}
                             </span>
-                            {task.priority && (
-                              <span
-                                className={`rounded border px-1.5 py-0.5 text-[10px] uppercase ${
-                                  PRIORITY_STYLES[task.priority] ||
-                                  PRIORITY_STYLES.low
-                                }`}
-                              >
-                                {task.priority}
-                              </span>
-                            )}
-                          </div>
-                          <p className="mb-2 leading-snug text-gray-300">
-                            {task.title}
-                          </p>
+                          )}
+                          {ageLabel(task.ageDays) && (
+                            <span
+                              className="ml-auto flex items-center gap-0.5 text-[10px] text-gray-600"
+                              title={`Sin cambios desde hace ${task.ageDays} días`}
+                            >
+                              <Clock className="h-2.5 w-2.5" />
+                              {ageLabel(task.ageDays)}
+                            </span>
+                          )}
+                        </div>
+                        <p className="mb-2 leading-snug text-gray-300">
+                          {task.title}
+                        </p>
+                        <div className="flex items-center justify-between">
+                          {!mine && task.assigneeName && (
+                            <span className="text-[10px] text-gray-600">
+                              {task.assigneeName}
+                            </span>
+                          )}
                           <button
                             onClick={() => setAssigning(task)}
-                            className="flex items-center gap-1.5 text-xs text-gray-500 opacity-0 transition-opacity hover:text-teal-400 group-hover:opacity-100"
+                            className="ml-auto flex items-center gap-1.5 text-xs text-gray-500 opacity-0 transition-opacity hover:text-teal-400 group-hover:opacity-100"
                           >
                             <Send className="h-3 w-3" />
                             Asignar a un agente
                           </button>
-                        </article>
-                      ))}
-                    </div>
-                  </section>
-                ))}
-              </div>
-            )}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
           </>
         )}
       </main>
@@ -256,6 +292,7 @@ export default function VoloPage() {
         <AssignTaskDialog
           task={assigning}
           onClose={() => setAssigning(null)}
+          onAssigned={() => void loadWork()}
         />
       )}
     </div>
@@ -267,8 +304,7 @@ export default function VoloPage() {
  *
  * The button is a plain link to the server-side flow rather than a fetch: the
  * redirect lands on this same origin, which is what makes "Connect" work from
- * a browser on another machine — the case that a CLI loopback redirect cannot
- * serve.
+ * a browser on another machine — the case a CLI loopback redirect cannot serve.
  */
 function ConnectPrompt({ status }: { status: Status | null }) {
   return (
@@ -278,7 +314,7 @@ function ConnectPrompt({ status }: { status: Status | null }) {
       <p className="mb-6 text-sm text-gray-500">
         {status?.expired
           ? 'La sesión con Volo caducó y no se pudo renovar. Vuelve a conectar.'
-          : 'Conecta tu cuenta de Volo para ver los boards y asignar tareas a los agentes.'}
+          : 'Conecta tu cuenta de Volo para ver tu trabajo y asignar tareas a los agentes.'}
       </p>
       <a
         href="/api/volo/auth/start?returnTo=/volo"

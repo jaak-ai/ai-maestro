@@ -25,12 +25,26 @@ ya está navegando (`http://172.27.240.10:23000/api/volo/auth/callback`).
 - [x] `lib/volo/client.ts` — llamadas a las herramientas MCP de Volo.
 - [x] Rutas: status, auth/start, auth/callback, auth/disconnect, boards,
       boards/[identifier], assign.
-- [x] `app/volo/page.tsx` + `components/volo/AssignTaskDialog.tsx`.
+- [x] `app/volo/page.tsx` + `components/volo/AssignTaskDialog.tsx`, sobre la
+      vista unificada `get_cross_board_kanban` — la misma que hay detrás de
+      volo.jaak.ai/my-work.
 - [x] Enlace en la cabecera.
+
+## Por qué la vista unificada y no un kanban por board
+
+`get_cross_board_kanban` agrupa por TIPO de columna, no por nombre. En este
+workspace conviven `ToDo`, `Todo`, `Por Hacer` y `Backlog` para el mismo
+estado: agrupar por nombre habría dispersado el mismo estado en cuatro
+columnas. Además trae las tareas de todos los boards a la vez, que es lo que
+hace falta para decidir qué delegar.
 
 ## Verificado contra el Volo real
 
 - 19 boards leídos.
+- Vista unificada: 275 tareas propias (162 por hacer, 38 en curso) en 9
+  boards. Con `mine=false`, 567 de todo el equipo. El filtro `mine` funciona.
+- Volo trunca el resultado (`truncated: 75` con limit 200); la interfaz lo
+  dice en vez de enseñar un tablero incompleto que parezca completo.
 - Agrupación por columnas correcta: Tech Ops reparte 850 tareas en 7 columnas
   (159 ToDo, 37 In Progress, 71 Blocked, 493 Done).
 - `get_task` devuelve `{task, board}` con `board.id`.
@@ -47,7 +61,7 @@ vacías, que parece un problema de permisos y no un fallo de agrupación.
 - [ ] Tests (vitest) del cliente y de la agrupación.
 - [ ] Verificación visual: la parte de interfaz no está probada por nadie
       todavía, solo compilada y servida con HTTP 200.
-- [ ] Refrescar el board tras asignar, para que se vea el cambio de columna.
+- [x] Refrescar tras asignar (`onAssigned`).
 - [ ] Si cambia la IP del host cambia el redirect_uri y Volo lo rechaza: hay
       que volver a conectar. `/api/volo/status` devuelve el redirect actual
       para poder diagnosticarlo.

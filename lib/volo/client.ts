@@ -223,3 +223,89 @@ export async function moveTask(
 ): Promise<void> {
   await callTool('move_task', { boardId, taskId, columnId })
 }
+
+// ---------------------------------------------------------------------------
+// Cross-board kanban — the "my work" view
+// ---------------------------------------------------------------------------
+
+/**
+ * A task as returned by the unified kanban.
+ *
+ * Richer than the board shape: it carries where the task lives (board name and
+ * prefix) and who it belongs to, because the whole point of this view is that
+ * the tasks come from everywhere at once.
+ */
+export interface CrossBoardTask {
+  taskId: string
+  taskCode: string
+  title: string
+  boardId: string
+  boardName: string
+  boardPrefix: string
+  columnId: string
+  columnName: string
+  columnType: string
+  columnColor?: string
+  priority?: string
+  assignee?: string
+  assigneeUserId?: string
+  assigneeName?: string
+  assigneeAvatar?: string
+  ageDays?: number
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface CrossBoardColumn {
+  /** Normalised type: not_started, in_progress, done. */
+  type: string
+  /** Human label for the type, already localised by Volo. */
+  label: string
+  tasks: CrossBoardTask[]
+}
+
+export interface CrossBoardKanban {
+  columns: CrossBoardColumn[]
+  boards: Array<{ id: string; name: string; prefix: string }>
+  /** Raw column names found, mapped to their type — useful for diagnostics. */
+  statuses: Array<{ name: string; type: string; color?: string; count: number }>
+  people: Array<{ id?: string; name?: string; avatar?: string }>
+  total: number
+  truncated?: number
+}
+
+export interface CrossBoardOptions {
+  /** Only tasks assigned to the connected user. */
+  mine?: boolean
+  includeDone?: boolean
+  limit?: number
+  boardIds?: string[]
+}
+
+/**
+ * The unified kanban: one person's tasks wherever they live.
+ *
+ * Volo groups by column TYPE rather than name on purpose — boards name their
+ * columns differently (`ToDo`, `Todo`, `Por Hacer`, `Backlog` all appear in
+ * this workspace), so grouping by name would scatter the same state across
+ * several columns.
+ */
+export async function getCrossBoardKanban(
+  options: CrossBoardOptions = {}
+): Promise<CrossBoardKanban> {
+  const result = await callTool<CrossBoardKanban>('get_cross_board_kanban', {
+    mine: options.mine ?? true,
+    includeDone: options.includeDone ?? false,
+    limit: options.limit ?? 200,
+    ...(options.boardIds?.length ? { boardIds: options.boardIds } : {}),
+  })
+
+  return {
+    columns: result?.columns || [],
+    boards: result?.boards || [],
+    statuses: result?.statuses || [],
+    people: result?.people || [],
+    total: result?.total ?? 0,
+    truncated: result?.truncated,
+  }
+}

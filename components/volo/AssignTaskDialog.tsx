@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { X, Send, AlertTriangle, Check } from 'lucide-react'
-import type { VoloTask } from '@/lib/volo/client'
+import type { CrossBoardTask } from '@/lib/volo/client'
 
 interface Agent {
   id: string
@@ -12,8 +12,10 @@ interface Agent {
 }
 
 interface Props {
-  task: VoloTask
+  task: CrossBoardTask
   onClose: () => void
+  /** Called after a successful delivery, so the board can refresh. */
+  onAssigned?: () => void
 }
 
 interface Result {
@@ -23,7 +25,7 @@ interface Result {
   moveError?: string
 }
 
-export default function AssignTaskDialog({ task, onClose }: Props) {
+export default function AssignTaskDialog({ task, onClose, onAssigned }: Props) {
   const [agents, setAgents] = useState<Agent[]>([])
   const [agentId, setAgentId] = useState('')
   const [note, setNote] = useState('')
@@ -61,6 +63,7 @@ export default function AssignTaskDialog({ task, onClose }: Props) {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'No se pudo asignar')
       setResult(data)
+      onAssigned?.()
     } catch (err) {
       setError((err as Error).message)
     } finally {
@@ -79,7 +82,15 @@ export default function AssignTaskDialog({ task, onClose }: Props) {
       >
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>
-            <p className="font-mono text-xs text-teal-500">{task.taskCode}</p>
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-xs text-teal-500">
+                {task.taskCode}
+              </span>
+              {/* The view mixes boards, so naming the origin matters. */}
+              <span className="rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-400">
+                {task.boardName}
+              </span>
+            </div>
             <h2 className="text-sm leading-snug text-gray-200">{task.title}</h2>
           </div>
           <button
