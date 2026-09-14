@@ -38,7 +38,7 @@ SDK:  `@a2a-js/sdk` v1.1.0 (oficial, servidor + cliente)
       DECIDIDO polling sobre hook de entrega: el hook obligaría a tocar el
       pipeline de mensajes existente y eso reduce mucho las opciones de que
       upstream acepte el PR. Sustituir `awaitReply` si el coste importa.
-- [ ] Almacén de tareas persistente (SIGUIENTE) (el `InMemoryTaskStore` del SDK no
+- [x] Almacén de tareas persistente — `lib/a2a/task-store.ts` (13 tests). El `InMemoryTaskStore` del SDK no
       sobrevive a un reinicio; AI Maestro corre bajo PM2 con reinicios).
 - [ ] Montaje del transporte: rutas Next bajo `app/api/a2a/` o intercepción
       en `server.mjs`. Debe funcionar en modo full y headless.
