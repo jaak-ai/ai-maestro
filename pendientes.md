@@ -30,12 +30,15 @@ SDK:  `@a2a-js/sdk` v1.1.0 (oficial, servidor + cliente)
       no se pierde quién llamó.
 - [x] Agent Card por agente — `lib/a2a/agent-card.ts` (12 tests).
 - [ ] Endpoint de descubrimiento en la ruta well-known que exige la spec.
-- [~] Puente AMP — `lib/a2a/amp-bridge.ts`: `dispatchToAgent()` y
-      `findReply()` listos. Falta envolverlos en un `AgentExecutor` del SDK.
-- [~] Correlación: `findReply()` busca en el buzón de enviados del agente
-      por `inReplyTo`, acotado por timestamp. Falta persistir el mapa
-      `taskId` ↔ `ampMessageId` y decidir polling vs evento.
-- [ ] Almacén de tareas persistente (el `InMemoryTaskStore` del SDK no
+- [x] `AgentExecutor` — `lib/a2a/executor.ts` (8 tests). Publica task →
+      working → artifact → completed. Distingue agente offline (mensaje
+      encolado) de fallo, y dice que cancelar NO retira el mensaje ya
+      entregado al buzón.
+- [x] Correlación por `inReplyTo`, acotada por timestamp y límite de 50.
+      DECIDIDO polling sobre hook de entrega: el hook obligaría a tocar el
+      pipeline de mensajes existente y eso reduce mucho las opciones de que
+      upstream acepte el PR. Sustituir `awaitReply` si el coste importa.
+- [ ] Almacén de tareas persistente (SIGUIENTE) (el `InMemoryTaskStore` del SDK no
       sobrevive a un reinicio; AI Maestro corre bajo PM2 con reinicios).
 - [ ] Montaje del transporte: rutas Next bajo `app/api/a2a/` o intercepción
       en `server.mjs`. Debe funcionar en modo full y headless.
