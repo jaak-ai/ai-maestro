@@ -1,6 +1,6 @@
 'use client'
 
-import { Menu, HelpCircle, Grid3X3, Users, FolderKanban, UserCircle, Puzzle, Tablet } from 'lucide-react'
+import { Menu, HelpCircle, Grid3X3, Users, FolderKanban, UserCircle, Puzzle, Tablet, ListTodo} from 'lucide-react'
 
 interface HeaderProps {
   onToggleSidebar?: () => void
@@ -42,6 +42,14 @@ export default function Header({ onToggleSidebar, sidebarCollapsed, activeAgentI
               Help
             </button>
           )}
+          <a
+            href="/volo"
+            className="text-sm px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-200 rounded transition-colors flex items-center gap-1.5"
+            title="Volo tasks"
+          >
+            <ListTodo className="w-3.5 h-3.5" />
+            Volo
+          </a>
           <a
             href="/teams"
             className="text-sm px-3 py-1 bg-teal-600 hover:bg-teal-700 text-white rounded transition-colors flex items-center gap-1.5"
