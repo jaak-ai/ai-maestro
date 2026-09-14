@@ -1,0 +1,52 @@
+# A2A Protocol Server — rama `feat/a2a-protocol-server`
+
+Expone los agentes de AI Maestro por el protocolo Agent2Agent (A2A) v1.0, para
+que sistemas y agentes externos (LangChain, CrewAI, código propio) puedan
+descubrirlos e invocarlos sin acoplarse a la API de AI Maestro.
+
+**No sustituye a AMP.** AMP sigue siendo el bus interno entre agentes de la
+malla; A2A es la puerta de entrada desde fuera. La ejecución de una tarea A2A
+se traduce a un mensaje AMP, de modo que un agente apagado la recibe igual
+(store-and-forward) en vez de fallar.
+
+Spec: https://a2a-protocol.org/v1.0.0/specification/
+SDK:  `@a2a-js/sdk` v1.1.0 (oficial, servidor + cliente)
+
+## Decisiones tomadas
+
+- **Una Agent Card por agente**, no una agregada del host. Cada agente se
+  anuncia y se invoca por separado.
+- **Ejecución vía puente AMP**: la tarea A2A se convierte en mensaje AMP al
+  buzón del agente; la respuesta del agente resuelve la tarea. Diferido, no
+  streaming en vivo.
+- **Se propone a upstream** (23blocks-OS) además de vivir en jaak-ai.
+
+## Subtareas
+
+- [ ] Identidad del remitente: decidir cómo se representa un llamante A2A
+      externo al enviar por AMP (`sendFromUI` exige un `from` que resuelva a
+      un agente). Probable: identidad dedicada tipo `a2a-gateway`.
+- [ ] Generar la Agent Card por agente desde el registro
+      (`lib/agent-registry.ts`): nombre, descripción, skills, URL, transportes.
+- [ ] Endpoint de descubrimiento en la ruta well-known que exige la spec.
+- [ ] `AgentExecutor` que traduce `message/send` → `sendFromUI()` y devuelve
+      la tarea en estado `submitted`/`working`.
+- [ ] Correlación de la respuesta: mapear `taskId` ↔ id del mensaje AMP y
+      resolver la tarea cuando llegue un mensaje con ese `inReplyTo`.
+- [ ] Almacén de tareas persistente (el `InMemoryTaskStore` del SDK no
+      sobrevive a un reinicio; AI Maestro corre bajo PM2 con reinicios).
+- [ ] Montaje del transporte: rutas Next bajo `app/api/a2a/` o intercepción
+      en `server.mjs`. Debe funcionar en modo full y headless.
+- [ ] Autenticación: qué exige el servidor a un cliente A2A externo.
+      Sin esto NO se despliega fuera de la VPN.
+- [ ] Firma de Agent Cards con JWS reutilizando las claves Ed25519 que AMP ya
+      genera por agente, en vez de introducir un modelo de identidad nuevo.
+- [ ] Tests unitarios (vitest, como el resto del repo).
+- [ ] Documentación en `docs/` y entrada en CLAUDE.md.
+
+## Riesgos conocidos
+
+- La respuesta diferida encaja mal con clientes A2A que esperan streaming.
+  Hay que declarar honestamente las capabilities en la card.
+- Exponer agentes por HTTP amplía la superficie de ataque: hasta que la
+  autenticación esté cerrada, esto solo escucha dentro de la VPN.
