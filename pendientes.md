@@ -50,7 +50,7 @@ SDK:  `@a2a-js/sdk` v1.1.0 (oficial, servidor + cliente)
       como "deja pasar a todos". La card anuncia el esquema cuando hay auth.
 - [ ] Firma de Agent Cards con JWS reutilizando las claves Ed25519 que AMP ya
       genera por agente, en vez de introducir un modelo de identidad nuevo.
-- [ ] Tests unitarios (vitest, como el resto del repo).
+- [x] Tests unitarios (vitest, como el resto del repo).
 - [ ] Documentación en `docs/` y entrada en CLAUDE.md.
 
 ## Prioridad acordada
