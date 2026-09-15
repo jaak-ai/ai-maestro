@@ -94,6 +94,16 @@ export async function POST(request: NextRequest) {
     'Si te falta especificación, pregunta al agente con rol manager. No preguntes a la persona directamente.'
   )
 
+  // Whether the agent can actually act on this now.
+  //
+  // `outcome.deferred` does not cover an agent with no live session: the
+  // message is written to the inbox and delivery reports success, while the
+  // log says "tmux session not found". Recording that as notified tells the
+  // operator somebody received the task when nothing is running.
+  const hasLiveSession = (agent.sessions || []).some(
+    (session) => session.status === 'online'
+  )
+
   let outcome
   try {
     outcome = await sendFromUI({
@@ -160,7 +170,7 @@ export async function POST(request: NextRequest) {
     agentName: agent.label || agent.name,
     messageId: outcome.message.id,
     assignedAt: new Date().toISOString(),
-    deferred: outcome.deferred === true,
+    deferred: outcome.deferred === true || !hasLiveSession,
     state: 'delivered',
     movedInVolo: moved,
   })
@@ -168,8 +178,9 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({
     delivered: true,
     messageId: outcome.message.id,
-    notified: outcome.notified,
-    deferred: outcome.deferred === true,
+    notified: outcome.notified && hasLiveSession,
+    deferred: outcome.deferred === true || !hasLiveSession,
+    agentOffline: !hasLiveSession,
     moved,
     moveError,
   })

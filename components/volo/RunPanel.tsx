@@ -63,11 +63,15 @@ function time(iso: string): string {
 
 export default function RunPanel({
   taskCode,
+  agentId,
   onClose,
 }: {
   taskCode: string
+  /** Lets the panel say WHY there is no run, instead of only that there isn't. */
+  agentId?: string
   onClose: () => void
 }) {
+  const [agentOnline, setAgentOnline] = useState<boolean | null>(null)
   const [run, setRun] = useState<Run | null>(null)
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
   const [open, setOpen] = useState<string | null>(null)
@@ -95,6 +99,26 @@ export default function RunPanel({
       setLoading(false)
     }
   }, [taskCode])
+
+  // A missing run has three very different causes — the agent is off, the
+  // orchestrator skill is not installed, or the run simply has not begun. Only
+  // the first is visible from here, and it is the most common.
+  useEffect(() => {
+    if (!agentId) return
+    fetch('/api/agents')
+      .then((r) => r.json())
+      .then((d) => {
+        const found = (d.agents || []).find(
+          (a: { id: string }) => a.id === agentId
+        )
+        setAgentOnline(
+          !!found?.sessions?.some(
+            (s: { status?: string }) => s.status === 'online'
+          )
+        )
+      })
+      .catch(() => setAgentOnline(null))
+  }, [agentId])
 
   useEffect(() => {
     void load()
@@ -179,12 +203,23 @@ export default function RunPanel({
               <p className="text-sm text-gray-400">
                 No hay corrida del orquestador para esta tarea.
               </p>
-              {/* Not an error: a delegated task whose agent has not started yet
-                  legitimately has no workspace. */}
-              <p className="mt-2 text-xs text-gray-600">
-                Aparecerá aquí cuando el agente arranque
-                task-orchestrator-ligo-skill.
-              </p>
+              {agentOnline === false ? (
+                <>
+                  <p className="mt-2 text-xs text-amber-300">
+                    El agente está apagado. La tarea llegó a su buzón, pero no
+                    hay ningún proceso que la lea.
+                  </p>
+                  <p className="mt-1 text-xs text-gray-600">
+                    Arranca su sesión y la recogerá al despertar.
+                  </p>
+                </>
+              ) : (
+                <p className="mt-2 text-xs text-gray-600">
+                  Aparecerá aquí cuando el agente arranque
+                  task-orchestrator-ligo-skill. Si el agente está vivo y esto
+                  no cambia, puede que no tenga el skill instalado.
+                </p>
+              )}
             </div>
           )}
 

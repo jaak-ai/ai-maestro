@@ -100,7 +100,7 @@ export default function VoloPage() {
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [assigning, setAssigning] = useState<CrossBoardTask | null>(null)
-  const [viewingRun, setViewingRun] = useState<string | null>(null)
+  const [viewingRun, setViewingRun] = useState<AssignmentWithRun | null>(null)
 
   // Filters
   const [mine, setMine] = useState(true)
@@ -429,7 +429,11 @@ export default function VoloPage() {
       )}
 
       {viewingRun && (
-        <RunPanel taskCode={viewingRun} onClose={() => setViewingRun(null)} />
+        <RunPanel
+          taskCode={viewingRun.taskCode}
+          agentId={viewingRun.agentId}
+          onClose={() => setViewingRun(null)}
+        />
       )}
 
       {assigning && (
@@ -484,12 +488,12 @@ function AssignmentCard({
 }: {
   assignment: AssignmentWithRun
   showAnswer?: boolean
-  onOpenRun?: (taskCode: string) => void
+  onOpenRun?: (assignment: AssignmentWithRun) => void
 }) {
   const run = assignment.run
   return (
     <article
-      onClick={() => onOpenRun?.(assignment.taskCode)}
+      onClick={() => onOpenRun?.(assignment)}
       className="cursor-pointer rounded border border-gray-800 bg-gray-900 p-2.5 text-sm transition-colors hover:border-gray-700"
     >
       <div className="mb-1 flex flex-wrap items-center gap-1.5">
