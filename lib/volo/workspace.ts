@@ -259,11 +259,6 @@ export interface Artifact {
   modifiedAt: string
 }
 
-/** True when `candidate` is the root itself or sits underneath it. */
-function isInside(root: string, candidate: string): boolean {
-  return candidate === root || candidate.startsWith(root + path.sep)
-}
-
 /**
  * Real, canonical root of a workspace, or null when it cannot be resolved.
  *
@@ -355,11 +350,13 @@ export function readArtifact(
   // workspaces los escriben agentes que clonan repositorios, asi que ese
   // enlace no tiene que ponerlo un atacante.
   //
-  // Va inline y no en un ayudante porque el analisis estatico sigue el dato
-  // desde el parametro hasta el acceso a disco: sacar la guarda a otra funcion
-  // la esconde del analisis aunque proteja igual.
+  // El startsWith va escrito aqui y no detras de un ayudante. El analisis
+  // estatico sigue el dato desde el parametro hasta el acceso a disco, y una
+  // comprobacion metida en otra funcion queda fuera de ese recorrido: protege
+  // igual, pero ni el analizador ni quien lea esto la ven desde donde importa.
+  const prefix = root + path.sep
   const candidate = path.resolve(root, relativePath)
-  if (!isInside(root, candidate)) return null
+  if (candidate !== root && !candidate.startsWith(prefix)) return null
 
   let file: string
   try {
@@ -367,7 +364,7 @@ export function readArtifact(
   } catch {
     return null
   }
-  if (!isInside(root, file)) return null
+  if (file !== root && !file.startsWith(prefix)) return null
 
   try {
     const stat = fs.statSync(file)
