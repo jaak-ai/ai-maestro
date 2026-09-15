@@ -265,47 +265,18 @@ function isInside(root: string, candidate: string): boolean {
 }
 
 /**
- * Resolve an artifact path inside a workspace, refusing anything that escapes.
+ * Real, canonical root of a workspace, or null when it cannot be resolved.
  *
- * Both the task code and the relative path arrive from a URL, so the resolved
- * path is checked against the workspace root rather than trusted — a `..`
- * segment or an absolute path would otherwise read any file the server can.
- *
- * The containment check runs TWICE, and the second one is the one that
- * matters. `path.resolve` works on the text of the path and does not follow
- * symlinks, so a link created inside the workspace and pointing outside would
- * clear the first check and `openSync` would follow it anyway. These
- * workspaces are written by agents that clone repositories, so such a link is
- * not a remote hypothesis.
- *
- * Hence the real path is resolved and checked again. A file that does not
- * exist makes realpath throw, which returns null — the right answer anyway.
+ * Symlinks are resolved here on purpose. `path.resolve` works on the text of
+ * the path and does not follow them, so comparing against a non-canonical root
+ * would let a link inside the workspace escape it.
  */
-function resolveArtifact(
-  workspacePath: string,
-  relativePath: string
-): string | null {
-  if (!relativePath || path.isAbsolute(relativePath)) return null
-
-  let root: string
+function workspaceRoot(workspacePath: string): string | null {
   try {
-    root = fs.realpathSync(path.resolve(workspacePath))
+    return fs.realpathSync(path.resolve(workspacePath))
   } catch {
     return null
   }
-
-  const resolved = path.resolve(root, relativePath)
-  if (!isInside(root, resolved)) return null
-
-  let real: string
-  try {
-    real = fs.realpathSync(resolved)
-  } catch {
-    return null
-  }
-  if (!isInside(root, real)) return null
-
-  return real
 }
 
 /**
@@ -372,8 +343,31 @@ export function readArtifact(
   const workspacePath = findWorkspace(taskCode)
   if (!workspacePath) return null
 
-  const file = resolveArtifact(workspacePath, relativePath)
-  if (!file) return null
+  if (!relativePath || path.isAbsolute(relativePath)) return null
+
+  const root = workspaceRoot(workspacePath)
+  if (!root) return null
+
+  // La contencion se comprueba DOS veces y aqui mismo, no en una funcion
+  // aparte: primero sobre el texto de la ruta, y luego sobre el camino real,
+  // porque path.resolve no sigue enlaces simbolicos y un enlace creado dentro
+  // del workspace apuntando fuera pasaria la primera comprobacion. Estos
+  // workspaces los escriben agentes que clonan repositorios, asi que ese
+  // enlace no tiene que ponerlo un atacante.
+  //
+  // Va inline y no en un ayudante porque el analisis estatico sigue el dato
+  // desde el parametro hasta el acceso a disco: sacar la guarda a otra funcion
+  // la esconde del analisis aunque proteja igual.
+  const candidate = path.resolve(root, relativePath)
+  if (!isInside(root, candidate)) return null
+
+  let file: string
+  try {
+    file = fs.realpathSync(candidate)
+  } catch {
+    return null
+  }
+  if (!isInside(root, file)) return null
 
   try {
     const stat = fs.statSync(file)
