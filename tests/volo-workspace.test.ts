@@ -264,6 +264,33 @@ describe('artifacts', () => {
     }
   })
 
+  // La contencion sola no bastaba: `root` se deriva del taskCode, que tambien
+  // llega de la URL, asi que se comparaba un valor del usuario contra una raiz
+  // elegida por el usuario. La lista blanca valida cada parametro por su
+  // cuenta y rompe esa dependencia.
+  it('refuses path segments outside the allowlist', async () => {
+    makeWorkspace('TO-29')
+    const { readArtifact } = await import('@/lib/volo/workspace')
+    for (const malo of [
+      '../secreto.md',          // traversal clasico
+      'diseno/../../secreto.md',// traversal en medio
+      '.oculto',                // nombre oculto
+      'diseno//plan.md',        // segmento vacio
+      'diseno/.../plan.md',     // solo puntos
+      '..\\secreto.md',          // separador de Windows
+      '-rf/plan.md',            // empieza por guion
+    ]) {
+      expect(readArtifact('TO-29', malo), malo).toBeNull()
+    }
+  })
+
+  it('still reads the legitimate artifact paths', async () => {
+    makeWorkspace('TO-30')
+    const { readArtifact } = await import('@/lib/volo/workspace')
+    expect(readArtifact('TO-30', 'session.md')?.content).toContain('bitácora')
+    expect(readArtifact('TO-30', 'diseno/plan.md')?.content).toContain('el plan')
+  })
+
   it('refuses an absolute artifact path', async () => {
     makeWorkspace('TO-25')
     const { readArtifact } = await import('@/lib/volo/workspace')

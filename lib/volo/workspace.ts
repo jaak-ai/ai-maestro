@@ -111,6 +111,16 @@ export function phaseLabel(phase: string | null): string | null {
 }
 
 /**
+ * Un segmento de ruta aceptable: empieza por letra o digito, y sigue con
+ * letras, digitos, punto, guion o guion bajo.
+ *
+ * Empezar por alfanumerico no es cosmetico: es lo que descarta "..", ".", y
+ * los nombres ocultos. Un patron que permitiera el punto inicial dejaria pasar
+ * ".." — que es exactamente el fallo que tenia el taskCode.
+ */
+const SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+
+/**
  * Locate a task's workspace, or null when no run has been started.
  *
  * The task code arrives from a URL and picks the ROOT that every later
@@ -128,7 +138,7 @@ export function phaseLabel(phase: string | null): string | null {
  * that depends on it instead of two functions away.
  */
 export function findWorkspace(taskCode: string): string | null {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(taskCode)) return null
+  if (!SEGMENT.test(taskCode) || taskCode.length > 64) return null
 
   for (const root of workspaceRoots()) {
     const prefix = root + path.sep
@@ -354,22 +364,34 @@ export function readArtifact(
   const workspacePath = findWorkspace(taskCode)
   if (!workspacePath) return null
 
-  if (!relativePath || path.isAbsolute(relativePath)) return null
+  if (!relativePath) return null
+
+  // Lista blanca por segmento, la misma postura que findWorkspace aplica al
+  // taskCode. Cada segmento tiene que EMPEZAR por letra o digito, lo que
+  // descarta "..", ".", los nombres ocultos y los segmentos vacios; y al no
+  // admitir separadores, descarta tambien las rutas absolutas y las barras
+  // invertidas.
+  //
+  // Comprobar la contencion no bastaba, y no por descuido: `root` se deriva
+  // del taskCode, que tambien llega de la URL. Es decir, se comparaba un valor
+  // del usuario contra una raiz elegida por el usuario. Eso protege solo
+  // mientras findWorkspace valide bien el taskCode —y hoy mismo se ha visto
+  // que no lo hacia: ".." pasaba su patron—. Validar cada parametro por su
+  // cuenta rompe esa dependencia.
+  if (relativePath.split('/').some((seg) => !SEGMENT.test(seg))) return null
 
   const root = workspaceRoot(workspacePath)
   if (!root) return null
 
-  // La contencion se comprueba DOS veces y aqui mismo, no en una funcion
-  // aparte: primero sobre el texto de la ruta, y luego sobre el camino real,
-  // porque path.resolve no sigue enlaces simbolicos y un enlace creado dentro
-  // del workspace apuntando fuera pasaria la primera comprobacion. Estos
-  // workspaces los escriben agentes que clonan repositorios, asi que ese
-  // enlace no tiene que ponerlo un atacante.
+  // Y ademas la contencion, DOS veces: primero sobre el texto de la ruta y
+  // luego sobre el camino real, porque path.resolve no sigue enlaces
+  // simbolicos y un enlace creado dentro del workspace apuntando fuera pasaria
+  // la primera comprobacion. Estos workspaces los escriben agentes que clonan
+  // repositorios, asi que ese enlace no tiene que ponerlo un atacante.
   //
-  // El startsWith va escrito aqui y no detras de un ayudante. El analisis
-  // estatico sigue el dato desde el parametro hasta el acceso a disco, y una
-  // comprobacion metida en otra funcion queda fuera de ese recorrido: protege
-  // igual, pero ni el analizador ni quien lea esto la ven desde donde importa.
+  // Redundante con la lista blanca para el caso de `..`, no para el de los
+  // enlaces. Y va escrita aqui, no detras de un ayudante: una comprobacion
+  // metida en otra funcion protege igual, pero no se ve desde donde importa.
   const prefix = root + path.sep
   const candidate = path.resolve(root, relativePath)
   if (candidate !== root && !candidate.startsWith(prefix)) return null
