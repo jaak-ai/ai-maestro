@@ -1,0 +1,35 @@
+# Sin esto, `COPY . .` se lleva el node_modules de la máquina que construye y
+# pisa el que la imagen acaba de instalar. Los módulos nativos —node-pty,
+# cozo-node, onnxruntime— quedan enlazados contra el Node del host: si ahí hay
+# Node 22 y la imagen usa Node 20, el binario pide libnode.so.127 y el
+# contenedor arranca y muere. Cuesta horas de diagnóstico porque el build pasa.
+node_modules
+**/node_modules
+
+# Salida de compilación: la imagen la genera, traerla del host la invalida.
+.next
+dist
+build
+
+# Estado local que no pertenece a una imagen.
+logs
+*.log
+.env
+.env.*
+!.env.example
+
+# Historial y metadatos que solo engordan el contexto de build.
+.git
+.github
+coverage
+.nyc_output
+
+# Artefactos de desarrollo.
+.DS_Store
+*.swp
+tmp
+scratchpad
+marketing
+
+# El plugin es un submódulo con su propio ciclo; la imagen headless no lo usa.
+plugin

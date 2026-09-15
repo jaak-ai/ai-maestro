@@ -1,0 +1,35 @@
+# Managed by jaak-actions — DO NOT MODIFY (includes AI agents).
+# Config: .github/config/cd-config.yml | Docs: https://github.com/jaak-ai/jaak-actions
+
+name: CD
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to deploy (e.g., v1.2.3-dev.1)'
+        required: true
+        type: string
+      force_vercel_deploy:
+        description: 'Deploy Vercel environments gated with auto_deploy: false (manual approval)'
+        required: false
+        default: false
+        type: boolean
+
+# GitHub Actions caps any nested reusable workflow's permissions by what
+# the calling workflow declares. cd-pipeline → docker-build needs
+# packages:write (GHCR push) and id-token:write (OIDC). Removing any of
+# these here will reintroduce the "startup_failure: workflow is requesting
+# 'packages: write', but is only allowed 'packages: read'" error.
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  pipeline:
+    uses: jaak-ai/jaak-actions/.github/workflows/cd-pipeline.yml@v5.17.0
+    with:
+      tag: ${{ inputs.tag }}
+      force_vercel_deploy: ${{ inputs.force_vercel_deploy || false }}
+    secrets: inherit
