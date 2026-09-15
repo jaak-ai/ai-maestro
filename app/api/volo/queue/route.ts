@@ -11,6 +11,8 @@ import {
 } from '@/lib/volo/assignments'
 import { findAgentReply, replyText } from '@/lib/volo/agent-reply'
 import { phaseLabel, readRun } from '@/lib/volo/workspace'
+import { getActivity } from '@/services/sessions-service'
+import { getAgent } from '@/lib/agent-registry'
 
 /**
  * GET /api/volo/queue
@@ -87,14 +89,39 @@ export async function GET(request: NextRequest) {
   const assignments = listAssignments().filter((a) => a.state !== 'cancelled')
   const assignedCodes = new Set(assignments.map((a) => a.taskCode))
 
+  // Whether each agent is sitting at a prompt waiting for someone to answer.
+  //
+  // This is the failure this queue exists to prevent: an agent asks a question
+  // in its own terminal and waits forever, because nobody is watching that
+  // terminal. The AI Maestro hook records `waiting_for_input`, so the question
+  // can surface here instead of only existing on a screen nobody has open.
+  let activity: Record<string, { status?: string; hookStatus?: string }> = {}
+  try {
+    activity = (await getActivity()) as typeof activity
+  } catch {
+    // Activity is an enhancement; the queue must still render without it.
+  }
+
   // Attach the orchestrator's live phase. "With an agent" on its own says
   // nothing about progress: a run exploring the code and a run parked on a
   // human checkpoint look identical until the phase is read from the
   // workspace event log.
   const withRun = assignments.map((a) => {
     const run = readRun(a.taskCode)
+    const agent = getAgent(a.agentId)
+    // The agent name is the tmux session name — that is the contract the
+    // registry and the session discovery share.
+    const sessionName = agent?.name
+    const agentActivity = sessionName ? activity[sessionName] : undefined
+
     return {
       ...a,
+      agentActivity: agentActivity?.status ?? null,
+      /** True while the agent is blocked on a question or a permission. */
+      needsAttention:
+        agentActivity?.hookStatus === 'waiting_for_input' ||
+        agentActivity?.hookStatus === 'permission_request',
+      attentionKind: agentActivity?.hookStatus ?? null,
       run: run
         ? {
             phase: run.currentPhase,

@@ -17,6 +17,7 @@ import {
   X,
   Activity,
   PauseCircle,
+  Hand,
 } from 'lucide-react'
 import { priorityCode, priorityRank } from '@/lib/volo/priority'
 import type { CrossBoardTask } from '@/lib/volo/client'
@@ -40,7 +41,12 @@ interface Run {
   phasesCompleted: number
 }
 
-type AssignmentWithRun = Assignment & { run?: Run | null }
+type AssignmentWithRun = Assignment & {
+  run?: Run | null
+  /** Agent is blocked at a prompt waiting for a person. */
+  needsAttention?: boolean
+  attentionKind?: string | null
+}
 
 interface Queue {
   unassigned: CrossBoardTask[]
@@ -396,7 +402,11 @@ export default function VoloPage() {
               <Column
                 icon={<Bot className="h-4 w-4 text-blue-400" />}
                 title="Con agente"
-                subtitle="en curso — la fase viene del orquestador"
+                subtitle={
+                  withAgent.filter((a) => a.needsAttention).length > 0
+                    ? `${withAgent.filter((a) => a.needsAttention).length} esperan tu respuesta`
+                    : 'en curso — la fase viene del orquestador'
+                }
                 count={withAgent.length}
               >
                 {withAgent.map((a) => (
@@ -456,7 +466,7 @@ function Column({
 }: {
   icon: React.ReactNode
   title: string
-  subtitle: string
+  subtitle: React.ReactNode
   count: number
   children: React.ReactNode
 }) {
@@ -518,6 +528,18 @@ function AssignmentCard({
         </span>
       </div>
       <p className="mb-2 leading-snug text-gray-300">{assignment.taskTitle}</p>
+      {/* The agent is stopped at a prompt. This is the case that used to be
+          invisible: it asked a question in its own terminal and waited, and
+          nobody was watching that terminal. */}
+      {assignment.needsAttention && (
+        <div className="mb-2 flex items-center gap-1.5 rounded bg-amber-500/20 px-2 py-1 text-[11px] font-medium text-amber-200">
+          <Hand className="h-3 w-3 shrink-0" />
+          {assignment.attentionKind === 'permission_request'
+            ? 'Pide permiso — ábrelo para responder'
+            : 'Te está preguntando — ábrelo para responder'}
+        </div>
+      )}
+
       {/* The phase is the answer to "what step is this at". Without it, a run
           exploring the code and one parked on a human checkpoint look the
           same. */}
