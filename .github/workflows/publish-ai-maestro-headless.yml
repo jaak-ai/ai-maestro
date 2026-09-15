@@ -130,7 +130,10 @@ jobs:
         run: ./scripts/test-amp-headless-image.sh '${{ steps.metadata.outputs.tag }}'
 
       - name: Trivy HIGH/CRITICAL
-        uses: aquasecurity/trivy-action@0.28.0
+        # Fijada por SHA y no por etiqueta, igual que en
+        # publish-workbench-broker.yml: una etiqueta puede reapuntarse y
+        # cambiaria lo que ejecuta este workflow sin cambio alguno aqui.
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           image-ref: ${{ steps.metadata.outputs.tag }}
           severity: HIGH,CRITICAL
