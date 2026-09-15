@@ -1,0 +1,190 @@
+# Publica la imagen headless que consume el proveedor AMP del cluster.
+#
+# Autónomo a propósito, en vez de llamar a jaak-actions/cd-pipeline.yml: este
+# repositorio es un fork PÚBLICO, y GitHub no permite que un repo público
+# consuma workflows reutilizables de uno privado. El dispatch falla con
+# "workflow was not found" aunque el acceso de jaak-actions esté en
+# `organization` y el fichero exista.
+#
+# Los gates NO se relajan por eso. Son los mismos que aplica
+# publish-workbench-broker.yml en jaak-claude-agents: tests, build local,
+# Trivy HIGH/CRITICAL bloqueante, SBOM y firma cosign. Publicar la imagen a
+# mano desde una máquina se saltaría los tres últimos, que es exactamente lo
+# que esto existe para impedir.
+name: Publish AI Maestro Headless
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Versión semver inmutable (ej. 0.38.10-dev.1)
+        required: true
+        type: string
+  push:
+    tags: [ai-maestro-headless-v*]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ai-maestro-headless-image
+  cancel-in-progress: false
+
+env:
+  REGISTRY: docker.io
+  REPOSITORY: jaakai/ai-maestro-headless
+  PLATFORM: linux/amd64
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+      - name: Tests
+        run: |
+          yarn install --frozen-lockfile
+          yarn test
+
+  publish:
+    needs: [unit-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Resolver versión inmutable
+        id: metadata
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          version="$INPUT_VERSION"
+          if [ "$EVENT_NAME" = push ]; then
+            version="${GITHUB_REF_NAME#ai-maestro-headless-v}"
+          fi
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || {
+            echo 'versión semver inmutable inválida' >&2
+            exit 1
+          }
+          {
+            echo "version=$version"
+            echo "image=${REGISTRY}/${REPOSITORY}"
+            echo "tag=${REGISTRY}/${REPOSITORY}:$version"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Una etiqueta ya publicada no se repisa: el manifiesto referencia por
+      # digest, y reapuntar una etiqueta dejaría el cluster corriendo algo
+      # distinto de lo que dice el repositorio de manifiestos.
+      - name: Rechazar tag ya publicado
+        shell: bash
+        run: |
+          set -euo pipefail
+          if docker manifest inspect '${{ steps.metadata.outputs.tag }}' >/dev/null 2>&1; then
+            echo 'tag ya publicado; incrementa versión' >&2
+            exit 1
+          fi
+
+      - name: Build local para validación
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Containerfile.headless
+          platforms: ${{ env.PLATFORM }}
+          load: true
+          push: false
+          provenance: false
+          sbom: false
+          tags: ${{ steps.metadata.outputs.tag }}
+
+      # La imagen no sirve de nada si arranca y muere. Este script comprueba
+      # que responde el proveedor AMP, que NO sirve dashboard, y que corre sin
+      # root ni compilador. Tres intentos fallidos en local nacieron de un
+      # build en verde sobre un contenedor que no levantaba.
+      - name: Smoke test de la imagen
+        shell: bash
+        run: ./scripts/test-amp-headless-image.sh '${{ steps.metadata.outputs.tag }}'
+
+      - name: Trivy HIGH/CRITICAL
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.metadata.outputs.tag }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - name: SBOM SPDX
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ steps.metadata.outputs.tag }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: false
+
+      - name: Push Docker Hub
+        id: push
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag='${{ steps.metadata.outputs.tag }}'
+          output="$(docker push "$tag")"
+          printf '%s\n' "$output"
+          # Docker imprime "<tag>: digest: sha256:… size: N"; el hash es el
+          # campo que sigue a "digest:", no el segundo de la línea.
+          digest="$(printf '%s\n' "$output" | awk '{for (i = 1; i < NF; i++) if ($i == "digest:") print $(i + 1)}' | tail -1)"
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]] || {
+            echo 'el registro no devolvió digest válido' >&2
+            exit 1
+          }
+          {
+            echo "ref=${{ steps.metadata.outputs.image }}@$digest"
+            echo "digest=$digest"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Firmar digest y atestar SBOM
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign sign --yes '${{ steps.push.outputs.ref }}'
+          cosign attest --yes --type spdxjson --predicate sbom.spdx.json '${{ steps.push.outputs.ref }}'
+
+      - name: Guardar SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-maestro-headless-${{ steps.metadata.outputs.version }}-sbom
+          path: sbom.spdx.json
+          retention-days: 90
+
+      - name: Publicación verificada
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo '## Imagen headless firmada'
+            echo '```'
+            echo '${{ steps.push.outputs.ref }}'
+            echo '```'
+            echo 'Fijar este digest en jaak-odin-manifest:'
+            echo 'clouds/oci/production-cluster/agent-executor/amp-provider/deployment.yaml'
+          } >> "$GITHUB_STEP_SUMMARY"
