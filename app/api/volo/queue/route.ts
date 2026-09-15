@@ -1,0 +1,146 @@
+import { NextRequest, NextResponse } from 'next/server'
+import {
+  getCrossBoardKanban,
+  VoloNotConnectedError,
+  type CrossBoardTask,
+} from '@/lib/volo/client'
+import {
+  listAssignments,
+  markAnswered,
+  type Assignment,
+} from '@/lib/volo/assignments'
+import { findAgentReply, replyText } from '@/lib/volo/agent-reply'
+import { phaseLabel, readRun } from '@/lib/volo/workspace'
+import { getActivity } from '@/services/sessions-service'
+import { getAgent } from '@/lib/agent-registry'
+
+/**
+ * GET /api/volo/queue
+ *
+ * The development queue, in three columns:
+ *
+ *   unassigned  Volo tasks nobody has handed to an agent
+ *   withAgent   delivered to an agent, no reply yet
+ *   answered    the agent replied; waiting for a person to check it
+ *
+ * Only the first column comes from Volo. The other two are AI Maestro's own
+ * record of what it delegated — Volo never learns that a task went to an
+ * agent, so that fact lives here or nowhere.
+ */
+export const dynamic = 'force-dynamic'
+
+/**
+ * Check the agents' sent boxes for replies to outstanding assignments.
+ *
+ * Done on read rather than on a timer: the queue is looked at far less often
+ * than a poll would run, and a background timer per assignment would keep
+ * scanning inboxes for tasks nobody is watching.
+ */
+async function refreshAnswers(assignments: Assignment[]): Promise<void> {
+  const pending = assignments.filter((a) => a.state === 'delivered')
+
+  await Promise.all(
+    pending.map(async (assignment) => {
+      try {
+        const reply = await findAgentReply(
+          assignment.agentId,
+          assignment.messageId,
+          assignment.assignedAt
+        )
+        if (reply) markAnswered(assignment.taskCode, replyText(reply))
+      } catch {
+        // An agent whose mailbox cannot be read must not fail the whole queue.
+      }
+    })
+  )
+}
+
+export async function GET(request: NextRequest) {
+  const params = request.nextUrl.searchParams
+
+  let tasks: CrossBoardTask[] = []
+  let voloError: string | null = null
+  let boards: Array<{ id: string; name: string; prefix: string }> = []
+  let truncated: number | undefined
+
+  try {
+    const kanban = await getCrossBoardKanban({
+      mine: params.get('mine') !== 'false',
+      includeDone: params.get('includeDone') === 'true',
+      // 500, not 200: at 200 Volo truncated 75 of this workspace's tasks, and
+      // a queue that silently omits work is worse than a slow one.
+      limit: 500,
+    })
+    tasks = kanban.columns.flatMap((c) => c.tasks)
+    boards = kanban.boards
+    truncated = kanban.truncated
+  } catch (err) {
+    if (err instanceof VoloNotConnectedError) {
+      return NextResponse.json({ error: 'not_connected' }, { status: 409 })
+    }
+    // Volo being unreachable must not hide what is already with agents: that
+    // column is local and still true.
+    voloError = (err as Error).message
+  }
+
+  const all = listAssignments()
+  await refreshAnswers(all)
+
+  const assignments = listAssignments().filter((a) => a.state !== 'cancelled')
+  const assignedCodes = new Set(assignments.map((a) => a.taskCode))
+
+  // Whether each agent is sitting at a prompt waiting for someone to answer.
+  //
+  // This is the failure this queue exists to prevent: an agent asks a question
+  // in its own terminal and waits forever, because nobody is watching that
+  // terminal. The AI Maestro hook records `waiting_for_input`, so the question
+  // can surface here instead of only existing on a screen nobody has open.
+  let activity: Record<string, { status?: string; hookStatus?: string }> = {}
+  try {
+    activity = (await getActivity()) as typeof activity
+  } catch {
+    // Activity is an enhancement; the queue must still render without it.
+  }
+
+  // Attach the orchestrator's live phase. "With an agent" on its own says
+  // nothing about progress: a run exploring the code and a run parked on a
+  // human checkpoint look identical until the phase is read from the
+  // workspace event log.
+  const withRun = assignments.map((a) => {
+    const run = readRun(a.taskCode)
+    const agent = getAgent(a.agentId)
+    // The agent name is the tmux session name — that is the contract the
+    // registry and the session discovery share.
+    const sessionName = agent?.name
+    const agentActivity = sessionName ? activity[sessionName] : undefined
+
+    return {
+      ...a,
+      agentActivity: agentActivity?.status ?? null,
+      /** True while the agent is blocked on a question or a permission. */
+      needsAttention:
+        agentActivity?.hookStatus === 'waiting_for_input' ||
+        agentActivity?.hookStatus === 'permission_request',
+      attentionKind: agentActivity?.hookStatus ?? null,
+      run: run
+        ? {
+            phase: run.currentPhase,
+            phaseLabel: phaseLabel(run.currentPhase),
+            awaitingHuman: run.awaitingHuman,
+            message: run.currentMessage,
+            lastEventAt: run.lastEventAt,
+            phasesCompleted: run.phasesCompleted.length,
+          }
+        : null,
+    }
+  })
+
+  return NextResponse.json({
+    unassigned: tasks.filter((t) => !assignedCodes.has(t.taskCode)),
+    withAgent: withRun.filter((a) => a.state === 'delivered'),
+    answered: withRun.filter((a) => a.state === 'answered'),
+    boards,
+    truncated,
+    voloError,
+  })
+}
