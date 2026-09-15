@@ -33,6 +33,7 @@ check() {
 
 cleanup() {
     docker rm -f "$NAME" >/dev/null 2>&1 || true
+    docker rm -f "$NAME-sinred" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -73,6 +74,39 @@ check "sin compilador en la final" ausente \
     "$(docker exec "$NAME" sh -c 'command -v gcc >/dev/null && echo presente || echo ausente' 2>/dev/null)"
 check "tini es PID 1" tini \
     "$(docker exec "$NAME" sh -c 'cat /proc/1/comm' 2>/dev/null)"
+
+echo ""
+echo "Red"
+# El namespace agent-executor deniega TODO el egreso por defecto
+# (agent-executor-egress-deny, podSelector: {}), y la politica que lo abre
+# selecciona por ligo.jaak.ai/managed-by, etiqueta que el proveedor no lleva.
+# Es decir: en el cluster este Pod corre SIN salida, ni siquiera DNS.
+#
+# Funciona, pero por un detalle que no es evidente: getPublicUrl() recorre las
+# interfaces y solo cae a resolver su propio hostname cuando no encuentra
+# ninguna. Un Pod siempre tiene eth0, asi que nunca llega ahi.
+#
+# Este check fija esa condicion. Si alguien introduce una resolucion DNS en el
+# arranque, aqui se ve; en el cluster se veria como un Pod que no pasa a Ready
+# y un error que no apunta a la politica de red.
+NETNAME="$NAME-sinred"
+docker rm -f "$NETNAME" >/dev/null 2>&1 || true
+# --network none quita tambien eth0, que un Pod si tiene; se le da el hostname
+# en /etc/hosts como hace kubelet para no probar una condicion que no existe.
+docker run -d --name "$NETNAME" --network none \
+    --hostname amp-provider-0 --add-host amp-provider-0:127.0.0.1 \
+    "$IMAGE" >/dev/null 2>&1
+for _ in $(seq 1 30); do
+    docker exec "$NETNAME" node -e \
+        "fetch('http://127.0.0.1:23000/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" \
+        >/dev/null 2>&1 && break
+    sleep 1
+done
+check "arranca sin egreso de red" 200 \
+    "$(docker exec "$NETNAME" node -e \
+        "fetch('http://127.0.0.1:23000/api/v1/health').then(r=>console.log(r.status)).catch(()=>console.log('sin-respuesta'))" \
+        2>/dev/null | tr -d '\r')"
+docker rm -f "$NETNAME" >/dev/null 2>&1 || true
 
 echo ""
 echo "PASS=$PASS FAIL=$FAIL"
