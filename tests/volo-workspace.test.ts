@@ -213,6 +213,32 @@ describe('artifacts', () => {
     expect(readArtifact('TO-24', '../../etc/passwd')).toBeNull()
   })
 
+  // path.resolve trabaja sobre el texto de la ruta: un enlace simbolico creado
+  // DENTRO del workspace y apuntando fuera pasa la comprobacion de prefijo y
+  // openSync lo sigue igual. Los workspaces los escriben agentes que clonan
+  // repositorios, asi que el enlace no tiene que ponerlo un atacante.
+  it('refuses a symlink that points outside the workspace', async () => {
+    const dir = makeWorkspace('TO-27')
+    fs.writeFileSync(path.join(root, 'secreto.md'), 'no deberias verme')
+    const link = path.join(dir, 'diseno', 'fuga.md')
+    fs.mkdirSync(path.dirname(link), { recursive: true })
+    fs.symlinkSync(path.join(root, 'secreto.md'), link)
+
+    const { readArtifact } = await import('@/lib/volo/workspace')
+    expect(readArtifact('TO-27', 'diseno/fuga.md')).toBeNull()
+  })
+
+  it('refuses a symlinked directory that escapes', async () => {
+    const dir = makeWorkspace('TO-28')
+    const fuera = path.join(root, 'fuera')
+    fs.mkdirSync(fuera, { recursive: true })
+    fs.writeFileSync(path.join(fuera, 'secreto.md'), 'no deberias verme')
+    fs.symlinkSync(fuera, path.join(dir, 'atajo'))
+
+    const { readArtifact } = await import('@/lib/volo/workspace')
+    expect(readArtifact('TO-28', 'atajo/secreto.md')).toBeNull()
+  })
+
   it('refuses an absolute artifact path', async () => {
     makeWorkspace('TO-25')
     const { readArtifact } = await import('@/lib/volo/workspace')

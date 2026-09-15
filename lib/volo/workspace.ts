@@ -259,12 +259,27 @@ export interface Artifact {
   modifiedAt: string
 }
 
+/** True when `candidate` is the root itself or sits underneath it. */
+function isInside(root: string, candidate: string): boolean {
+  return candidate === root || candidate.startsWith(root + path.sep)
+}
+
 /**
  * Resolve an artifact path inside a workspace, refusing anything that escapes.
  *
  * Both the task code and the relative path arrive from a URL, so the resolved
  * path is checked against the workspace root rather than trusted — a `..`
  * segment or an absolute path would otherwise read any file the server can.
+ *
+ * The containment check runs TWICE, and the second one is the one that
+ * matters. `path.resolve` works on the text of the path and does not follow
+ * symlinks, so a link created inside the workspace and pointing outside would
+ * clear the first check and `openSync` would follow it anyway. These
+ * workspaces are written by agents that clone repositories, so such a link is
+ * not a remote hypothesis.
+ *
+ * Hence the real path is resolved and checked again. A file that does not
+ * exist makes realpath throw, which returns null — the right answer anyway.
  */
 function resolveArtifact(
   workspacePath: string,
@@ -272,11 +287,25 @@ function resolveArtifact(
 ): string | null {
   if (!relativePath || path.isAbsolute(relativePath)) return null
 
-  const resolved = path.resolve(workspacePath, relativePath)
-  const root = path.resolve(workspacePath)
-  if (resolved !== root && !resolved.startsWith(root + path.sep)) return null
+  let root: string
+  try {
+    root = fs.realpathSync(path.resolve(workspacePath))
+  } catch {
+    return null
+  }
 
-  return resolved
+  const resolved = path.resolve(root, relativePath)
+  if (!isInside(root, resolved)) return null
+
+  let real: string
+  try {
+    real = fs.realpathSync(resolved)
+  } catch {
+    return null
+  }
+  if (!isInside(root, real)) return null
+
+  return real
 }
 
 /**
