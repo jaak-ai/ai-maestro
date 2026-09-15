@@ -22,6 +22,7 @@ import { priorityCode, priorityRank } from '@/lib/volo/priority'
 import type { CrossBoardTask } from '@/lib/volo/client'
 import type { Assignment } from '@/lib/volo/assignments'
 import AssignTaskDialog from '@/components/volo/AssignTaskDialog'
+import RunPanel from '@/components/volo/RunPanel'
 
 interface Status {
   connected: boolean
@@ -99,6 +100,7 @@ export default function VoloPage() {
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [assigning, setAssigning] = useState<CrossBoardTask | null>(null)
+  const [viewingRun, setViewingRun] = useState<string | null>(null)
 
   // Filters
   const [mine, setMine] = useState(true)
@@ -398,7 +400,11 @@ export default function VoloPage() {
                 count={withAgent.length}
               >
                 {withAgent.map((a) => (
-                  <AssignmentCard key={a.taskCode} assignment={a} />
+                  <AssignmentCard
+                    key={a.taskCode}
+                    assignment={a}
+                    onOpenRun={setViewingRun}
+                  />
                 ))}
               </Column>
 
@@ -409,12 +415,21 @@ export default function VoloPage() {
                 count={answered.length}
               >
                 {answered.map((a) => (
-                  <AssignmentCard key={a.taskCode} assignment={a} showAnswer />
+                  <AssignmentCard
+                    key={a.taskCode}
+                    assignment={a}
+                    showAnswer
+                    onOpenRun={setViewingRun}
+                  />
                 ))}
               </Column>
             </div>
           </main>
         </>
+      )}
+
+      {viewingRun && (
+        <RunPanel taskCode={viewingRun} onClose={() => setViewingRun(null)} />
       )}
 
       {assigning && (
@@ -465,13 +480,18 @@ function Column({
 function AssignmentCard({
   assignment,
   showAnswer,
+  onOpenRun,
 }: {
   assignment: AssignmentWithRun
   showAnswer?: boolean
+  onOpenRun?: (taskCode: string) => void
 }) {
   const run = assignment.run
   return (
-    <article className="rounded border border-gray-800 bg-gray-900 p-2.5 text-sm">
+    <article
+      onClick={() => onOpenRun?.(assignment.taskCode)}
+      className="cursor-pointer rounded border border-gray-800 bg-gray-900 p-2.5 text-sm transition-colors hover:border-gray-700"
+    >
       <div className="mb-1 flex flex-wrap items-center gap-1.5">
         <span className="font-mono text-xs text-teal-500">
           {assignment.taskCode}

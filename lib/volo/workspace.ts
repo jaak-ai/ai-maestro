@@ -229,3 +229,142 @@ export function listRuns(): string[] {
     .sort((a, b) => b[1] - a[1])
     .map(([name]) => name)
 }
+
+// ---------------------------------------------------------------------------
+// Artifacts
+// ---------------------------------------------------------------------------
+
+/**
+ * Where each phase writes, per the orchestrator's own layout rules.
+ *
+ * The order is the order of the run, so a listing reads as a timeline rather
+ * than as an alphabetical directory dump.
+ */
+const ARTIFACT_CATEGORIES = [
+  { dir: '', label: 'Corrida' },
+  { dir: 'preparacion', label: 'Preparación' },
+  { dir: 'entendimiento', label: 'Entendimiento' },
+  { dir: 'diseno', label: 'Diseño' },
+  { dir: 'construccion', label: 'Construcción' },
+  { dir: 'entrega', label: 'Entrega' },
+  { dir: 'cierre', label: 'Cierre' },
+] as const
+
+export interface Artifact {
+  /** Path relative to the workspace root, e.g. `diseno/plan.md`. */
+  path: string
+  name: string
+  category: string
+  size: number
+  modifiedAt: string
+}
+
+/**
+ * Resolve an artifact path inside a workspace, refusing anything that escapes.
+ *
+ * Both the task code and the relative path arrive from a URL, so the resolved
+ * path is checked against the workspace root rather than trusted — a `..`
+ * segment or an absolute path would otherwise read any file the server can.
+ */
+function resolveArtifact(
+  workspacePath: string,
+  relativePath: string
+): string | null {
+  if (!relativePath || path.isAbsolute(relativePath)) return null
+
+  const resolved = path.resolve(workspacePath, relativePath)
+  const root = path.resolve(workspacePath)
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) return null
+
+  return resolved
+}
+
+/**
+ * List the readable artifacts of a run.
+ *
+ * `repos/` is skipped: it holds full git clones, and walking them would turn a
+ * listing into a filesystem crawl of somebody's entire codebase.
+ */
+export function listArtifacts(taskCode: string): Artifact[] {
+  const workspacePath = findWorkspace(taskCode)
+  if (!workspacePath) return []
+
+  const artifacts: Artifact[] = []
+
+  for (const { dir, label } of ARTIFACT_CATEGORIES) {
+    const full = dir ? path.join(workspacePath, dir) : workspacePath
+    let entries: fs.Dirent[]
+    try {
+      entries = fs.readdirSync(full, { withFileTypes: true })
+    } catch {
+      continue
+    }
+
+    for (const entry of entries) {
+      if (!entry.isFile()) continue
+      // Only text the panel can render. Screenshots and traces under
+      // runtime-evidence are listed by their directory, not inlined here.
+      if (!/\.(md|txt|jsonl|json)$/i.test(entry.name)) continue
+
+      const relative = dir ? path.join(dir, entry.name) : entry.name
+      try {
+        const stat = fs.statSync(path.join(full, entry.name))
+        artifacts.push({
+          path: relative,
+          name: entry.name,
+          category: label,
+          size: stat.size,
+          modifiedAt: new Date(stat.mtimeMs).toISOString(),
+        })
+      } catch {
+        /* vanished mid-listing */
+      }
+    }
+  }
+
+  return artifacts
+}
+
+/** Largest artifact returned inline, to keep a response readable. */
+const MAX_ARTIFACT_BYTES = 512 * 1024
+
+export interface ArtifactContent {
+  path: string
+  content: string
+  truncated: boolean
+  size: number
+}
+
+/** Read one artifact. Returns null when it does not exist or escapes the root. */
+export function readArtifact(
+  taskCode: string,
+  relativePath: string
+): ArtifactContent | null {
+  const workspacePath = findWorkspace(taskCode)
+  if (!workspacePath) return null
+
+  const file = resolveArtifact(workspacePath, relativePath)
+  if (!file) return null
+
+  try {
+    const stat = fs.statSync(file)
+    if (!stat.isFile()) return null
+
+    const handle = fs.openSync(file, 'r')
+    try {
+      const length = Math.min(stat.size, MAX_ARTIFACT_BYTES)
+      const buffer = Buffer.alloc(length)
+      fs.readSync(handle, buffer, 0, length, 0)
+      return {
+        path: relativePath,
+        content: buffer.toString('utf-8'),
+        truncated: stat.size > MAX_ARTIFACT_BYTES,
+        size: stat.size,
+      }
+    } finally {
+      fs.closeSync(handle)
+    }
+  } catch {
+    return null
+  }
+}

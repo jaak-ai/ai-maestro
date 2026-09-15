@@ -158,3 +158,74 @@ describe('listRuns', () => {
     expect(listRuns()).toEqual([])
   })
 })
+
+describe('artifacts', () => {
+  function makeWorkspace(taskCode: string) {
+    const dir = path.join(root, taskCode)
+    fs.mkdirSync(path.join(dir, 'diseno'), { recursive: true })
+    fs.mkdirSync(path.join(dir, 'repos', 'jaak-api'), { recursive: true })
+    fs.writeFileSync(path.join(dir, 'session.md'), '# bitácora')
+    fs.writeFileSync(path.join(dir, 'diseno', 'plan.md'), '# el plan\ncuerpo')
+    fs.writeFileSync(path.join(dir, 'repos', 'jaak-api', 'README.md'), 'no')
+    return dir
+  }
+
+  it('lists artifacts with their category', async () => {
+    makeWorkspace('TO-20')
+    const { listArtifacts } = await import('@/lib/volo/workspace')
+    const found = listArtifacts('TO-20')
+    expect(found.map((a) => a.path).sort()).toEqual([
+      'diseno/plan.md',
+      'session.md',
+    ])
+    expect(found.find((a) => a.name === 'plan.md')?.category).toBe('Diseño')
+  })
+
+  // repos/ holds full git clones; walking them would turn a listing into a
+  // crawl of an entire codebase.
+  it('does not walk into repos/', async () => {
+    makeWorkspace('TO-21')
+    const { listArtifacts } = await import('@/lib/volo/workspace')
+    expect(
+      listArtifacts('TO-21').some((a) => a.path.includes('repos'))
+    ).toBe(false)
+  })
+
+  it('reads an artifact', async () => {
+    makeWorkspace('TO-22')
+    const { readArtifact } = await import('@/lib/volo/workspace')
+    expect(readArtifact('TO-22', 'diseno/plan.md')?.content).toContain('el plan')
+  })
+
+  it('returns null for a missing artifact', async () => {
+    makeWorkspace('TO-23')
+    const { readArtifact } = await import('@/lib/volo/workspace')
+    expect(readArtifact('TO-23', 'diseno/nope.md')).toBeNull()
+  })
+
+  // The path arrives from a URL, so it must not be able to read outside the
+  // workspace.
+  it('refuses a traversing artifact path', async () => {
+    makeWorkspace('TO-24')
+    fs.writeFileSync(path.join(root, 'secreto.md'), 'no deberías verme')
+    const { readArtifact } = await import('@/lib/volo/workspace')
+    expect(readArtifact('TO-24', '../secreto.md')).toBeNull()
+    expect(readArtifact('TO-24', '../../etc/passwd')).toBeNull()
+  })
+
+  it('refuses an absolute artifact path', async () => {
+    makeWorkspace('TO-25')
+    const { readArtifact } = await import('@/lib/volo/workspace')
+    expect(readArtifact('TO-25', '/etc/passwd')).toBeNull()
+  })
+
+  it('reports truncation on a large artifact', async () => {
+    const dir = path.join(root, 'TO-26', 'diseno')
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, 'plan.md'), 'x'.repeat(600 * 1024))
+    const { readArtifact } = await import('@/lib/volo/workspace')
+    const read = readArtifact('TO-26', 'diseno/plan.md')
+    expect(read?.truncated).toBe(true)
+    expect(read!.content.length).toBeLessThan(600 * 1024)
+  })
+})
