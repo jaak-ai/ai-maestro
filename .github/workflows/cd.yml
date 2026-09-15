@@ -28,7 +28,7 @@ permissions:
 
 jobs:
   pipeline:
-    uses: jaak-ai/jaak-actions/.github/workflows/cd-pipeline.yml@__JAAK_ACTIONS_REF__
+    uses: jaak-ai/jaak-actions/.github/workflows/cd-pipeline.yml@v5.17.0
     with:
       tag: ${{ inputs.tag }}
       force_vercel_deploy: ${{ inputs.force_vercel_deploy || false }}
