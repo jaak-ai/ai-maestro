@@ -10,6 +10,7 @@ import {
   type Assignment,
 } from '@/lib/volo/assignments'
 import { findAgentReply, replyText } from '@/lib/volo/agent-reply'
+import { phaseLabel, readRun } from '@/lib/volo/workspace'
 
 /**
  * GET /api/volo/queue
@@ -86,10 +87,31 @@ export async function GET(request: NextRequest) {
   const assignments = listAssignments().filter((a) => a.state !== 'cancelled')
   const assignedCodes = new Set(assignments.map((a) => a.taskCode))
 
+  // Attach the orchestrator's live phase. "With an agent" on its own says
+  // nothing about progress: a run exploring the code and a run parked on a
+  // human checkpoint look identical until the phase is read from the
+  // workspace event log.
+  const withRun = assignments.map((a) => {
+    const run = readRun(a.taskCode)
+    return {
+      ...a,
+      run: run
+        ? {
+            phase: run.currentPhase,
+            phaseLabel: phaseLabel(run.currentPhase),
+            awaitingHuman: run.awaitingHuman,
+            message: run.currentMessage,
+            lastEventAt: run.lastEventAt,
+            phasesCompleted: run.phasesCompleted.length,
+          }
+        : null,
+    }
+  })
+
   return NextResponse.json({
     unassigned: tasks.filter((t) => !assignedCodes.has(t.taskCode)),
-    withAgent: assignments.filter((a) => a.state === 'delivered'),
-    answered: assignments.filter((a) => a.state === 'answered'),
+    withAgent: withRun.filter((a) => a.state === 'delivered'),
+    answered: withRun.filter((a) => a.state === 'answered'),
     boards,
     truncated,
     voloError,

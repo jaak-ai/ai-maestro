@@ -77,15 +77,21 @@ export async function POST(request: NextRequest) {
     sections.push('', '--- Nota de quien asigna ---', body.note.trim())
   }
 
-  // The working agreement travels with the task on purpose: an agent handed
-  // only a title tends to invent its own process — filing subtasks as new Volo
-  // tasks, or closing work outright instead of leaving it for review.
+  // Trigger the team's existing orchestrator rather than restating a process.
+  //
+  // `task-orchestrator-ligo-skill` already runs the full cycle — pre-flight,
+  // Volo input, preliminary analysis with a human review gate, exploration,
+  // plan with a second gate, build, code review, PR and handoff — across
+  // thirteen specialised agents. Its documented trigger is the phrase below
+  // plus a task code matching /[A-Z]{2,5}-\d+/, so the message says exactly
+  // that. Writing our own procedure here would duplicate 1700 lines of a
+  // maturer pipeline and drift from it on every change.
   sections.push(
     '',
     '--- Cómo trabajarla ---',
-    '- Volo es la fuente de verdad: consulta el detalle con el MCP jaak-volo si necesitas más contexto.',
-    '- Si la tarea tiene subtareas, NO crees tareas nuevas en Volo: regístralas como checklist en pendientes.md en la raíz del repo, en la rama de trabajo de esta tarea.',
-    `- Al terminar todos los items, márcalos, commitea y mueve ${body.taskCode} a Review (no a Done; Done lo valida una persona).`
+    `Trabaja la tarea ${body.taskCode} siguiendo task-orchestrator-ligo-skill.`,
+    'Si el skill no está instalado, responde a este mensaje diciéndolo en vez de improvisar un procedimiento propio.',
+    'Si te falta especificación, pregunta al agente con rol manager. No preguntes a la persona directamente.'
   )
 
   let outcome

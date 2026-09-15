@@ -15,6 +15,8 @@ import {
   Inbox,
   Search,
   X,
+  Activity,
+  PauseCircle,
 } from 'lucide-react'
 import { priorityCode, priorityRank } from '@/lib/volo/priority'
 import type { CrossBoardTask } from '@/lib/volo/client'
@@ -27,10 +29,22 @@ interface Status {
   redirectUri?: string
 }
 
+/** Live state of a task-orchestrator run, when one exists. */
+interface Run {
+  phase: string | null
+  phaseLabel: string | null
+  awaitingHuman: boolean
+  message: string | null
+  lastEventAt: string | null
+  phasesCompleted: number
+}
+
+type AssignmentWithRun = Assignment & { run?: Run | null }
+
 interface Queue {
   unassigned: CrossBoardTask[]
-  withAgent: Assignment[]
-  answered: Assignment[]
+  withAgent: AssignmentWithRun[]
+  answered: AssignmentWithRun[]
   boards: Array<{ id: string; name: string; prefix: string }>
   truncated?: number
   voloError?: string | null
@@ -159,7 +173,7 @@ export default function VoloPage() {
     return true
   }).sort(byPriorityThenAge)
 
-  const filterAssignments = (list: Assignment[]) =>
+  const filterAssignments = (list: AssignmentWithRun[]) =>
     list.filter((a) => {
       if (board && a.boardPrefix !== board) return false
       if (agent && a.agentName !== agent) return false
@@ -171,7 +185,7 @@ export default function VoloPage() {
     })
 
   // Same rule everywhere: P0 at the top of every column.
-  const byAssignmentPriority = (a: Assignment, b: Assignment) =>
+  const byAssignmentPriority = (a: AssignmentWithRun, b: AssignmentWithRun) =>
     priorityRank(a.priority) - priorityRank(b.priority)
 
   const withAgent = filterAssignments(queue?.withAgent || []).sort(
@@ -380,7 +394,7 @@ export default function VoloPage() {
               <Column
                 icon={<Bot className="h-4 w-4 text-blue-400" />}
                 title="Con agente"
-                subtitle="entregadas, sin respuesta todavía"
+                subtitle="en curso — la fase viene del orquestador"
                 count={withAgent.length}
               >
                 {withAgent.map((a) => (
@@ -452,9 +466,10 @@ function AssignmentCard({
   assignment,
   showAnswer,
 }: {
-  assignment: Assignment
+  assignment: AssignmentWithRun
   showAnswer?: boolean
 }) {
+  const run = assignment.run
   return (
     <article className="rounded border border-gray-800 bg-gray-900 p-2.5 text-sm">
       <div className="mb-1 flex flex-wrap items-center gap-1.5">
@@ -479,6 +494,31 @@ function AssignmentCard({
         </span>
       </div>
       <p className="mb-2 leading-snug text-gray-300">{assignment.taskTitle}</p>
+      {/* The phase is the answer to "what step is this at". Without it, a run
+          exploring the code and one parked on a human checkpoint look the
+          same. */}
+      {run?.phaseLabel && (
+        <div
+          className={`mb-2 flex items-center gap-1.5 rounded px-2 py-1 text-[11px] ${
+            run.awaitingHuman
+              ? 'bg-amber-500/15 text-amber-300'
+              : 'bg-blue-500/10 text-blue-300'
+          }`}
+          title={run.message || undefined}
+        >
+          {run.awaitingHuman ? (
+            <PauseCircle className="h-3 w-3 shrink-0" />
+          ) : (
+            <Activity className="h-3 w-3 shrink-0 animate-pulse" />
+          )}
+          <span className="truncate">{run.phaseLabel}</span>
+          {run.phasesCompleted > 0 && (
+            <span className="ml-auto shrink-0 text-gray-600">
+              {run.phasesCompleted} fases
+            </span>
+          )}
+        </div>
+      )}
       <div className="flex items-center gap-1.5 text-[11px] text-gray-500">
         <Bot className="h-3 w-3" />
         {assignment.agentName}
