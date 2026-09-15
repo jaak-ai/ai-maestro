@@ -54,13 +54,69 @@ RUN rm -f node_modules/node-pty/build/Release/pty.node \
 
 COPY . .
 
+# Podar las dependencias de desarrollo DESPUES de compilar los modulos
+# nativos: `npm prune` las borra en sitio sin tocar build/Release/pty.node,
+# mientras que reinstalar con --production volveria a traer el prebuild
+# incompatible.
+#
+# No es solo tamano: vitest viaja en la imagen y Trivy le encuentra un CVE
+# CRITICAL. Una dependencia que nunca se ejecuta en produccion sigue contando
+# como superficie de ataque mientras este en el disco.
+# `glob` es una dependencia FANTASMA: services/headless-router.ts,
+# config-service.ts, shared-state.ts y plugin-builder-service.ts la importan,
+# pero no aparece en package.json ni como prod ni como dev. Funcionaba porque
+# otro paquete la arrastraba, y la poda la destapo. Se instala explicitamente
+# hasta que el repo la declare.
+RUN npm install --no-save --legacy-peer-deps glob \
+    && node -e "require('glob'); console.log('glob disponible')"
+
+# La poda va DESPUES de instalar glob: al reves, npm install reintroduce el
+# arbol de desarrollo entero —vitest incluido, con su CVE CRITICAL— y deja la
+# poda sin efecto. Costo una vuelta de escaneo descubrirlo.
+# --legacy-peer-deps porque el arbol tiene conflictos de peer dependencies
+# que yarn tolera y npm no (@anthropic-ai/claude-agent-sdk pide un @anthropic-ai/sdk
+# distinto del instalado). Sin la bandera, prune aborta con ERESOLVE sin llegar
+# a borrar nada.
+RUN npm prune --omit=dev --legacy-peer-deps \
+    && node -e "require('node-pty'); console.log('node-pty sigue OK tras podar')"
+
+# Fuera Next.js y su cadena de React.
+#
+# server.mjs lo importa de forma DINAMICA y solo en la rama de modo completo
+# (`const next = (await import('next')).default`, linea 2629); headless entra
+# por la rama de headless-router y nunca lo evalua. Dejarlo dentro solo aporta
+# peso y superficie: es el paquete con la CVE CRITICAL mas grave que Trivy
+# encontro (CVE-2026-75604 en 14.2.35).
+#
+# Si algun dia headless necesitara Next, este RUN romperia el arranque de
+# forma inmediata y visible, no en silencio.
+# `tar` arrastra una CVE CRITICAL sin parche en la rama 6.x y llega como
+# dependencia de @mapbox/node-pre-gyp.
+#
+# node-pre-gyp NO se puede borrar: cozo-node lo requiere al arrancar, no solo
+# al instalar —comprobado, el contenedor muere con "Cannot find module
+# '@mapbox/node-pre-gyp'"—. Lo que si sobra es su `tar`, que solo se usa para
+# descomprimir binarios durante la instalacion, ya hecha en esta etapa.
+#
+# Si algun dia node-pre-gyp lo necesitara en ejecucion, el arranque romperia de
+# forma inmediata y visible, como paso al borrarlo entero.
+RUN rm -rf node_modules/tar node_modules/@mapbox/node-pre-gyp/node_modules/tar
+RUN rm -rf node_modules/next node_modules/react node_modules/react-dom \
+           node_modules/.next node_modules/@next \
+    && node -e "process.env.MAESTRO_MODE='headless'; console.log('sin next en la imagen')"
+
 # --- Imagen final ----------------------------------------------------------
 FROM docker.io/library/node:20.19.2-bookworm-slim
 
 # tini como PID 1: sin él, Node recibe las señales directamente y los procesos
 # hijos quedan huérfanos al parar el Pod, alargando el terminationGracePeriod
 # hasta el SIGKILL.
-RUN apt-get update && apt-get install -y --no-install-recommends tini \
+# upgrade ademas de install: la base bookworm-slim trae libgnutls30 con CVEs
+# CRITICAL ya corregidas en el repositorio de Debian. Sin el upgrade, la imagen
+# nace con vulnerabilidades que el propio apt puede resolver.
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends tini \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -84,6 +140,11 @@ COPY --from=builder --chown=node:node /app/app ./app
 # organización fallan con "permission denied" que no apunta a la causa.
 RUN mkdir -p /app/logs /home/node/.aimaestro /home/node/.agent-messaging \
     && chown -R node:node /app/logs /home/node
+
+# npm sale de la imagen final. Los modulos ya estan instalados y npm solo
+# aporta su propia copia de `tar`, que arrastra una CVE CRITICAL sin parche en
+# la rama 6.x. Un contenedor que solo enruta mensajes no instala paquetes.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 USER node
 
