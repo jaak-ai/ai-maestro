@@ -44,6 +44,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          # tests/plugin-hook-sync.test.ts comprueba que las tres copias del
+          # hook son identicas, y dos viven en el submodulo plugin/. Sin
+          # clonarlo el test falla por ausencia de ficheros, no por que el
+          # hook haya divergido.
+          submodules: recursive
       - uses: actions/setup-node@v4
         with:
           node-version: 20
