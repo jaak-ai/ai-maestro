@@ -1,0 +1,29 @@
+# ============================================
+# CD Configuration
+# Leído por: .github/workflows/cd.yml
+# Docs: https://github.com/jaak-ai/jaak-actions
+#
+# Los defaults globales (registries, gitops, notifications) se heredan
+# de jaak-actions/defaults/cd-defaults.yml. Solo define aquí lo específico
+# de este repo.
+# ============================================
+
+# --- Build ---
+build:
+  enabled: true
+  images:
+    # Imagen headless: solo la API, sin dashboard. Es lo que necesita el
+    # proveedor AMP del cluster, que no sirve interfaz a nadie.
+    #
+    # El nombre coincide con el que espera el manifiesto de
+    # agent-executor/amp-provider en jaak-odin-manifest; cambiarlo aquí sin
+    # cambiarlo allí deja el Deployment apuntando a una imagen inexistente.
+    - name: ai-maestro-headless
+      dockerfile: ./Containerfile.headless
+      runner: cpu-runners
+      registries:
+        - name: dockerhub
+          # gitops: true abre el PR en odin-manifest con el digest nuevo, en
+          # vez de dejarlo a mano. Es el paso que evita que el manifiesto y la
+          # imagen se desincronicen en silencio.
+          gitops: true

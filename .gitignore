@@ -162,3 +162,6 @@ incoming/
 
 # AI team operator-private instructions
 ai-team/
+
+# Ajustes locales de Claude Code (por maquina, no compartidos)
+.claude/settings.local.json

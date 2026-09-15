@@ -58,12 +58,56 @@ export function markPropagationProcessed(propagationId: string): void {
 }
 
 /**
+ * Parse MAESTRO_PUBLIC_URL, or return null when it is not set.
+ *
+ * Throws on a malformed value instead of falling back. The fallback would be
+ * an address the operator did not choose, and an unreachable host looks
+ * exactly like a healthy one from the inside: the process serves requests,
+ * and the peers that cannot reach it simply never arrive. A 500 naming the
+ * bad variable is the diagnosable failure.
+ */
+function readConfiguredPublicUrl(): string | null {
+  const raw = process.env.MAESTRO_PUBLIC_URL?.trim()
+  if (!raw) return null
+
+  let parsed: URL
+  try {
+    parsed = new URL(raw)
+  } catch {
+    throw new Error(
+      `MAESTRO_PUBLIC_URL is not a valid URL: ${JSON.stringify(raw)}`
+    )
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(
+      `MAESTRO_PUBLIC_URL must be http or https, got ${JSON.stringify(parsed.protocol)}`
+    )
+  }
+  if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
+    throw new Error(
+      'MAESTRO_PUBLIC_URL must be an address other hosts can reach, not localhost'
+    )
+  }
+
+  return raw.replace(/\/+$/, '')
+}
+
+/**
  * Get the public URL for this host
  * Centralized URL detection logic - detects Tailscale IP if available
  * NEVER returns localhost - uses hostname as absolute last resort
+ *
+ * MAESTRO_PUBLIC_URL wins over everything else. Interface detection picks the
+ * first non-internal IPv4, which inside a Kubernetes Pod is the Pod IP — an
+ * address that is routable within the cluster and nowhere else. A peer on the
+ * VPN that is handed that address cannot deliver to it, so any deployment
+ * reached through a load balancer has to state its own address explicitly.
  */
 export function getPublicUrl(host?: Host): string {
   const port = process.env.PORT || '23000'
+
+  const configured = readConfiguredPublicUrl()
+  if (configured) return configured
 
   // If host has a non-localhost URL, use it
   if (host?.url && !host.url.includes('localhost') && !host.url.includes('127.0.0.1')) {
