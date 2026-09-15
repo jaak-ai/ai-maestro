@@ -239,6 +239,31 @@ describe('artifacts', () => {
     expect(readArtifact('TO-28', 'atajo/secreto.md')).toBeNull()
   })
 
+  // El taskCode tambien llega de una URL y elige la RAIZ. El regex de
+  // findWorkspace acepta "..", asi que path.join(root, "..") devolvia el
+  // directorio padre como workspace y todo lo que colgara de el quedaba
+  // "dentro": la comprobacion de contencion se hacia contra una raiz que
+  // elegia quien llamaba.
+  it('refuses a task code that walks out of the workspace root', async () => {
+    const fuera = path.dirname(root)
+    const secreto = path.join(fuera, `secreto-${path.basename(root)}.md`)
+    fs.writeFileSync(secreto, 'no deberias verme')
+    try {
+      const { readArtifact, findWorkspace } = await import('@/lib/volo/workspace')
+      expect(findWorkspace('..')).toBeNull()
+      expect(readArtifact('..', path.basename(secreto))).toBeNull()
+    } finally {
+      fs.rmSync(secreto, { force: true })
+    }
+  })
+
+  it('refuses task codes that are only dots or start with a separator-ish char', async () => {
+    const { findWorkspace } = await import('@/lib/volo/workspace')
+    for (const code of ['.', '..', '...', '-rf', '.oculto']) {
+      expect(findWorkspace(code)).toBeNull()
+    }
+  })
+
   it('refuses an absolute artifact path', async () => {
     makeWorkspace('TO-25')
     const { readArtifact } = await import('@/lib/volo/workspace')

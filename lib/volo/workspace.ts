@@ -110,14 +110,30 @@ export function phaseLabel(phase: string | null): string | null {
   return PHASE_LABELS[phase] || phase.replace(/_/g, ' ')
 }
 
-/** Locate a task's workspace, or null when no run has been started. */
+/**
+ * Locate a task's workspace, or null when no run has been started.
+ *
+ * The task code arrives from a URL and picks the ROOT that every later
+ * containment check is measured against, so it gets validated harder than a
+ * name normally would.
+ *
+ * The code must START with a letter or a digit. The previous pattern allowed a
+ * leading dot, which let `..` through: `path.join(root, '..')` is the parent
+ * directory, it passes `isDirectory()`, and from then on the whole parent tree
+ * counted as "inside the workspace". Checking containment against a root the
+ * caller chose is not a check at all.
+ *
+ * The containment check after the join is belt and braces — the pattern
+ * already forbids separators — but it keeps the guarantee next to the code
+ * that depends on it instead of two functions away.
+ */
 export function findWorkspace(taskCode: string): string | null {
-  // Task codes reach the filesystem, so reject anything that is not a plain
-  // code rather than letting `../` walk out of the workspace root.
-  if (!/^[A-Za-z0-9._-]{1,64}$/.test(taskCode)) return null
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(taskCode)) return null
 
   for (const root of workspaceRoots()) {
+    const prefix = root + path.sep
     const candidate = path.join(root, taskCode)
+    if (!candidate.startsWith(prefix)) continue
     try {
       if (fs.statSync(candidate).isDirectory()) return candidate
     } catch {
