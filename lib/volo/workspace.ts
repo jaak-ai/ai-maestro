@@ -356,65 +356,55 @@ export interface ArtifactContent {
   size: number
 }
 
-/** Read one artifact. Returns null when it does not exist or escapes the root. */
+/**
+ * Read one artifact.
+ *
+ * El artefacto se busca EN EL LISTADO y se lee por la ruta que da el listado,
+ * no por la que llega en la peticion. Esa ruta se construye con las categorias
+ * —constantes— y los nombres que devuelve `readdir`, asi que el camino que
+ * llega al disco no lleva nada del usuario: su entrada solo se compara.
+ *
+ * Es ademas la semantica que se queria: se puede leer lo que el panel muestra.
+ *
+ * Comprobar la contencion no bastaba, y no por descuido: la raiz se deriva del
+ * taskCode, que tambien llega de la URL, con lo que se comparaba un valor del
+ * usuario contra una raiz elegida por el usuario. Eso protege solo mientras el
+ * taskCode este bien validado, y hoy se ha visto que no lo estaba: ".." pasaba
+ * su patron. Resolver por el listado no depende de ninguna de las dos cosas.
+ *
+ * Los enlaces simbolicos quedan fuera solos: Dirent.isFile() no los sigue, asi
+ * que el listado no los incluye.
+ */
 export function readArtifact(
   taskCode: string,
   relativePath: string
 ): ArtifactContent | null {
+  if (!relativePath) return null
+
   const workspacePath = findWorkspace(taskCode)
   if (!workspacePath) return null
 
-  if (!relativePath) return null
-
-  // Lista blanca por segmento, la misma postura que findWorkspace aplica al
-  // taskCode. Cada segmento tiene que EMPEZAR por letra o digito, lo que
-  // descarta "..", ".", los nombres ocultos y los segmentos vacios; y al no
-  // admitir separadores, descarta tambien las rutas absolutas y las barras
-  // invertidas.
-  //
-  // Comprobar la contencion no bastaba, y no por descuido: `root` se deriva
-  // del taskCode, que tambien llega de la URL. Es decir, se comparaba un valor
-  // del usuario contra una raiz elegida por el usuario. Eso protege solo
-  // mientras findWorkspace valide bien el taskCode —y hoy mismo se ha visto
-  // que no lo hacia: ".." pasaba su patron—. Validar cada parametro por su
-  // cuenta rompe esa dependencia.
-  if (relativePath.split('/').some((seg) => !SEGMENT.test(seg))) return null
-
-  const root = workspaceRoot(workspacePath)
-  if (!root) return null
-
-  // Y ademas la contencion, DOS veces: primero sobre el texto de la ruta y
-  // luego sobre el camino real, porque path.resolve no sigue enlaces
-  // simbolicos y un enlace creado dentro del workspace apuntando fuera pasaria
-  // la primera comprobacion. Estos workspaces los escriben agentes que clonan
-  // repositorios, asi que ese enlace no tiene que ponerlo un atacante.
-  //
-  // Redundante con la lista blanca para el caso de `..`, no para el de los
-  // enlaces. Y va escrita aqui, no detras de un ayudante: una comprobacion
-  // metida en otra funcion protege igual, pero no se ve desde donde importa.
-  const prefix = root + path.sep
-  const candidate = path.resolve(root, relativePath)
-  if (candidate !== root && !candidate.startsWith(prefix)) return null
-
-  let file: string
-  try {
-    file = fs.realpathSync(candidate)
-  } catch {
-    return null
-  }
-  if (file !== root && !file.startsWith(prefix)) return null
+  const listed = listArtifacts(taskCode).find((a) => a.path === relativePath)
+  if (!listed) return null
 
   try {
-    const stat = fs.statSync(file)
+    // realpath y contencion como ultimo cinturon: entre listar y leer, un
+    // fichero puede haberse convertido en enlace. La ventana es estrecha, pero
+    // cerrarla cuesta una llamada.
+    const root = fs.realpathSync(workspacePath)
+    const real = fs.realpathSync(path.join(workspacePath, listed.path))
+    if (real !== root && !real.startsWith(root + path.sep)) return null
+
+    const stat = fs.statSync(real)
     if (!stat.isFile()) return null
 
-    const handle = fs.openSync(file, 'r')
+    const handle = fs.openSync(real, 'r')
     try {
       const length = Math.min(stat.size, MAX_ARTIFACT_BYTES)
       const buffer = Buffer.alloc(length)
       fs.readSync(handle, buffer, 0, length, 0)
       return {
-        path: relativePath,
+        path: listed.path,
         content: buffer.toString('utf-8'),
         truncated: stat.size > MAX_ARTIFACT_BYTES,
         size: stat.size,
